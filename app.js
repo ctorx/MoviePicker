@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.2.0";
+const APP_VERSION = "2.3.0";
 
 // ---------- State (localStorage) ----------
 
@@ -582,19 +582,13 @@ function openInfo() {
     extra.appendChild(row);
   }
 
-  const vids = m.videos?.results || [];
-  const trailer =
-    vids.find((v) => v.site === "YouTube" && v.type === "Trailer" && v.official) ||
-    vids.find((v) => v.site === "YouTube" && v.type === "Trailer") ||
-    vids.find((v) => v.site === "YouTube");
-  trailerKey = trailer ? trailer.key : null;
+  trailerKey = trailerKeyFor(m);
   $("btnTrailer").hidden = !trailerKey;
   $("lnkCSM").href =
     "https://www.commonsensemedia.org/search/" + encodeURIComponent(m.title);
   openModal("modalInfo");
 }
 
-$("btnInfo").addEventListener("click", openInfo);
 
 // ---------- Trailer player ----------
 
@@ -602,12 +596,21 @@ $("btnInfo").addEventListener("click", openInfo);
 // (where the browser allows it — Android, not iOS) lock landscape.
 let trailerKey = null;
 
-async function openTrailer() {
-  if (!trailerKey) return;
+function trailerKeyFor(m) {
+  const vids = m?.videos?.results || [];
+  const trailer =
+    vids.find((v) => v.site === "YouTube" && v.type === "Trailer" && v.official) ||
+    vids.find((v) => v.site === "YouTube" && v.type === "Trailer") ||
+    vids.find((v) => v.site === "YouTube");
+  return trailer ? trailer.key : null;
+}
+
+async function openTrailer(key) {
+  if (!key) return;
   $("trailerFrame").src =
-    "https://www.youtube-nocookie.com/embed/" + trailerKey +
+    "https://www.youtube-nocookie.com/embed/" + key +
     "?autoplay=1&playsinline=1&rel=0";
-  $("lnkTrailerYT").href = "https://www.youtube.com/watch?v=" + trailerKey;
+  $("lnkTrailerYT").href = "https://www.youtube.com/watch?v=" + key;
   const overlay = $("trailerOverlay");
   overlay.hidden = false;
   try {
@@ -630,7 +633,7 @@ function closeTrailer() {
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
 }
 
-$("btnTrailer").addEventListener("click", openTrailer);
+$("btnTrailer").addEventListener("click", () => openTrailer(trailerKey));
 $("btnCloseTrailer").addEventListener("click", closeTrailer);
 document.addEventListener("fullscreenchange", () => {
   if (!document.fullscreenElement && !$("trailerOverlay").hidden) closeTrailer();
@@ -643,7 +646,8 @@ $("btnSeen").addEventListener("click", () => markCurrent("seen"));
 $("btnBlock").addEventListener("click", () => markCurrent("blocked"));
 $("btnFav").addEventListener("click", toggleFavorite);
 
-// Right = favorite, left = skip, up = seen, down = block.
+// Right = favorite, left = block, up = skip, down = seen.
+// A tap (no drag) on the poster opens More info; a double tap plays the trailer.
 const swipeArea = $("swipeArea");
 const BADGES = ["badgeFav", "badgeSkip", "badgeSeen", "badgeBlock"];
 let drag = null;
@@ -667,7 +671,14 @@ function swipeOut(axis, dir, done) {
 swipeArea.addEventListener("pointerdown", (e) => {
   if (!current || $("card").classList.contains("loading")) return;
   if (e.target.closest("button")) return;
-  drag = { x: e.clientX, y: e.clientY, id: e.pointerId, active: false, axis: null };
+  drag = {
+    x: e.clientX,
+    y: e.clientY,
+    id: e.pointerId,
+    active: false,
+    axis: null,
+    tap: !!e.target.closest(".poster-wrap"),
+  };
 });
 
 swipeArea.addEventListener("pointermove", (e) => {
@@ -686,11 +697,11 @@ swipeArea.addEventListener("pointermove", (e) => {
   if (drag.axis === "x") {
     swipeArea.style.transform = `translateX(${dx}px)`;
     $("badgeFav").style.opacity = fade(dx);
-    $("badgeSkip").style.opacity = fade(-dx);
+    $("badgeBlock").style.opacity = fade(-dx);
   } else {
     swipeArea.style.transform = `translateY(${dy}px)`;
-    $("badgeSeen").style.opacity = fade(-dy);
-    $("badgeBlock").style.opacity = fade(dy);
+    $("badgeSkip").style.opacity = fade(-dy);
+    $("badgeSeen").style.opacity = fade(dy);
   }
 });
 
@@ -701,14 +712,37 @@ function snapBack() {
   setTimeout(() => { swipeArea.style.transition = ""; }, 200);
 }
 
+let tapTimer = null;
+
+function handleTap() {
+  if (tapTimer) {
+    // Second tap within the window: play the trailer instead.
+    clearTimeout(tapTimer);
+    tapTimer = null;
+    const key = trailerKeyFor(current);
+    if (key) openTrailer(key);
+    else showToast("No trailer available for this one.");
+  } else {
+    tapTimer = setTimeout(() => {
+      tapTimer = null;
+      openInfo();
+    }, 300);
+  }
+}
+
 function endDrag(e) {
   if (!drag) return;
   const wasActive = drag.active;
+  const wasTap = drag.tap && !drag.active;
   const axis = drag.axis;
   const dx = e.clientX - drag.x;
   const dy = e.clientY - drag.y;
   drag = null;
-  if (!wasActive) return;
+
+  if (!wasActive) {
+    if (wasTap && current) handleTap();
+    return;
+  }
 
   if (axis === "x" && dx > 90) {
     swipeOut("x", 1, () => {
@@ -721,20 +755,20 @@ function endDrag(e) {
       pickMovie();
     });
   } else if (axis === "x" && dx < -90) {
-    swipeOut("x", -1, () => markCurrent("skipped"));
-  } else if (axis === "y" && dy < -90) {
-    swipeOut("y", -1, () => markCurrent("seen"));
-  } else if (axis === "y" && dy > 90) {
     const blocked = current;
-    swipeOut("y", 1, () => {
+    swipeOut("x", -1, () => {
       markCurrent("blocked");
-      // Blocking is easy to hit by accident on a vertical fling; offer a way back.
+      // Blocking is easy to hit by accident on a fling; offer a way back.
       showToast(`Blocked "${blocked.title}"`, () => {
         delete lists.blocked[blocked.id];
         saveLists();
         refreshCounts();
       });
     });
+  } else if (axis === "y" && dy < -90) {
+    swipeOut("y", -1, () => markCurrent("skipped"));
+  } else if (axis === "y" && dy > 90) {
+    swipeOut("y", 1, () => markCurrent("seen"));
   } else {
     snapBack();
   }

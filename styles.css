@@ -191,50 +191,26 @@ button:active { transform: scale(0.98); }
   transform: scale(1.1);
 }
 
-.info-left { left: 8px; right: auto; color: #fff; }
-.info-left svg { stroke-width: 2; }
 
+/* One badge shows at a time, centered over the poster. */
 .swipe-badge {
   position: absolute;
-  top: 16px;
-  font-size: 1.2rem;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 1.5rem;
   font-weight: 800;
-  letter-spacing: 1px;
-  padding: 6px 14px;
-  border-radius: 8px;
+  letter-spacing: 2px;
+  padding: 10px 22px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.55);
   opacity: 0;
   pointer-events: none;
 }
-.badge-fav {
-  left: 12px;
-  color: var(--heart);
-  border: 3px solid var(--heart);
-  background: rgba(0, 0, 0, 0.4);
-  transform: rotate(-12deg);
-}
-.badge-skip {
-  right: 12px;
-  color: var(--muted);
-  border: 3px solid var(--muted);
-  background: rgba(0, 0, 0, 0.4);
-  transform: rotate(12deg);
-}
-.badge-seen {
-  top: auto;
-  bottom: 16px;
-  left: 50%;
-  transform: translateX(-50%);
-  color: var(--accent);
-  border: 3px solid var(--accent);
-  background: rgba(0, 0, 0, 0.4);
-}
-.badge-block {
-  left: 50%;
-  transform: translateX(-50%);
-  color: var(--danger);
-  border: 3px solid var(--danger);
-  background: rgba(0, 0, 0, 0.4);
-}
+.badge-fav { color: var(--heart); border: 3px solid var(--heart); }
+.badge-skip { color: var(--muted); border: 3px solid var(--muted); }
+.badge-seen { color: var(--accent); border: 3px solid var(--accent); }
+.badge-block { color: var(--danger); border: 3px solid var(--danger); }
 
 #movieTitle { font-size: 1.3rem; margin: 12px 0 4px; }
 #movieMeta { color: var(--muted); margin: 0; }
