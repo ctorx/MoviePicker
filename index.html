@@ -119,15 +119,12 @@
   </div>
 
   <!-- More info -->
-  <div id="modalInfo" class="modal sheet-modal" hidden>
-    <div class="sheet">
+  <div id="modalInfo" class="modal" hidden>
+    <div>
       <div class="modal-head">
         <h1 id="infoTitle"></h1>
-        <button class="icon-btn modal-close" data-close="modalInfo" title="Close">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="5" y1="5" x2="19" y2="19" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="19" y1="5" x2="5" y2="19" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-        </button>
       </div>
-      <div class="modal-body">
+      <div class="modal-body info-body">
         <div class="info-top">
           <img id="infoPoster" alt="">
           <div>
@@ -149,6 +146,7 @@
         <div id="infoExtra" class="info-extra"></div>
       </div>
     </div>
+    <button id="btnInfoBack" class="back-btn">← Back</button>
   </div>
 
   <!-- Saved lists -->

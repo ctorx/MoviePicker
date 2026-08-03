@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.6.0";
+const APP_VERSION = "2.6.1";
 
 // ---------- State (localStorage) ----------
 
@@ -388,8 +388,6 @@ const MODALS = ["modalSearch", "modalInfo", "modalList", "modalSettings"];
 function openModal(id) {
   $(id).hidden = false;
   $(id).scrollTop = 0;
-  const sheet = $(id).querySelector(".sheet");
-  if (sheet) sheet.scrollTop = 0;
   document.body.classList.add("no-scroll");
 }
 
@@ -408,10 +406,7 @@ document.querySelectorAll(".modal-close").forEach((btn) => {
   btn.addEventListener("click", () => closeModal(btn.dataset.close));
 });
 
-// Tapping the dimmed backdrop around a sheet closes it.
-$("modalInfo").addEventListener("click", (e) => {
-  if (e.target === $("modalInfo")) closeModal("modalInfo");
-});
+$("btnInfoBack").addEventListener("click", () => closeModal("modalInfo"));
 
 function openDrawer() {
   refreshCounts();

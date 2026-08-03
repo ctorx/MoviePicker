@@ -317,26 +317,23 @@ button:active { transform: scale(0.98); }
 .modal-body { max-width: 480px; margin: 0 auto; }
 .modal-head { max-width: 480px; margin: 0 auto; }
 
-/* Sheet variant: a centered card covering ~90% of the viewport. */
-.sheet-modal {
-  background: rgba(0, 0, 0, 0.6);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  overflow: hidden;
-}
-.sheet {
-  width: min(90vw, 480px);
-  max-height: 90vh;
-  max-height: 90dvh;
-  background: var(--bg);
+/* Extra room after the last info block so it can scroll clear of the
+   floating Back button. */
+.info-body { padding-bottom: 120px; }
+
+.back-btn {
+  position: fixed;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  padding: 13px 48px;
+  border-radius: 999px;
+  background: var(--card);
   border: 1px solid var(--border);
-  border-radius: 16px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding: 0 16px 20px;
-  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
+  font-weight: 700;
+  font-size: 1rem;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.55);
 }
 
 .toggle-row {
