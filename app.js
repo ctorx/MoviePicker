@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.6.1";
+const APP_VERSION = "2.7.0";
 
 // ---------- State (localStorage) ----------
 
@@ -47,7 +47,7 @@ const search = {
   director: "",
   directorIds: [],
   directorNames: [],
-  maxRuntime: 120,
+  maxRuntime: 150,
 };
 
 // ---------- TMDB API ----------
@@ -470,6 +470,7 @@ async function renderGenreChips() {
 function openSearch() {
   if (settings.age) $("inpAge").value = settings.age;
   if (settings.fromYear) $("inpYear").value = settings.fromYear;
+  $("inpYear").placeholder = "blank = " + (new Date().getFullYear() - 5);
   $("chkAdvanced").checked = search.advanced;
   $("advancedBox").hidden = !search.advanced;
   $("inpActors").value = search.actors;
@@ -513,9 +514,9 @@ $("btnApplySearch").addEventListener("click", async () => {
   const errEl = $("searchError");
   errEl.hidden = true;
 
-  const age = parseInt($("inpAge").value, 10);
-  const year = parseInt($("inpYear").value, 10);
   const thisYear = new Date().getFullYear();
+  const age = $("inpAge").value.trim() ? parseInt($("inpAge").value, 10) : 21;
+  const year = $("inpYear").value.trim() ? parseInt($("inpYear").value, 10) : thisYear - 5;
 
   if (!Number.isFinite(age) || age < 1 || age > 120) {
     errEl.textContent = "Enter the youngest viewer's age (1–120).";
@@ -1011,7 +1012,7 @@ $("btnSaveKeySettings").addEventListener("click", async () => {
 
 $("btnExport").addEventListener("click", () => {
   const data = {
-    app: "movie-night",
+    app: "movie-picker",
     version: APP_VERSION,
     exported: new Date().toISOString(),
     settings,
@@ -1020,7 +1021,7 @@ $("btnExport").addEventListener("click", () => {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = "movie-night-backup.json";
+  a.download = "movie-picker-backup.json";
   a.click();
   URL.revokeObjectURL(a.href);
 });
@@ -1048,7 +1049,7 @@ $("fileImport").addEventListener("change", async () => {
     showToast("Import complete — reloading…");
     setTimeout(() => location.reload(), 900);
   } catch {
-    showToast("That file isn't a Movie Night backup.");
+    showToast("That file isn't a Movie Picker backup.");
   }
 });
 

@@ -1,6 +1,6 @@
 {
-  "name": "Movie Night",
-  "short_name": "Movie Night",
+  "name": "Movie Picker",
+  "short_name": "Movie Picker",
   "description": "Help a group pick a movie to watch.",
   "start_url": "./",
   "scope": "./",

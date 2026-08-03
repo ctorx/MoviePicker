@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-  <title>Movie Night</title>
+  <title>Movie Picker</title>
   <meta name="description" content="Help a group pick a movie to watch.">
   <meta name="theme-color" content="#14181c">
   <link rel="manifest" href="manifest.webmanifest">
@@ -14,7 +14,7 @@
 <body>
   <main>
     <header>
-      <span class="brand">🎬 Movie Night</span>
+      <span class="brand">🎬 Movie Picker</span>
       <div class="header-actions">
         <button id="btnSearch" class="icon-btn" title="Search" hidden>
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><line x1="16.5" y1="16.5" x2="21" y2="21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
@@ -86,11 +86,11 @@
     </div>
     <div class="modal-body">
       <label for="inpAge">How old is the <strong>youngest</strong> person watching?</label>
-      <input id="inpAge" type="number" min="1" max="120" inputmode="numeric" placeholder="e.g. 12">
+      <input id="inpAge" type="number" min="1" max="120" inputmode="numeric" placeholder="blank = 21">
       <p class="hint" id="certHint"></p>
 
       <label for="inpYear"><strong>Oldest year</strong> to draw from</label>
-      <input id="inpYear" type="number" min="1930" inputmode="numeric" placeholder="e.g. 2010">
+      <input id="inpYear" type="number" min="1930" inputmode="numeric">
       <p class="hint">Movies from this year and newer are fair game.</p>
 
       <label class="toggle-row">
@@ -190,7 +190,7 @@
       <button id="btnApplyUpdate" class="small update-now" hidden>Update now</button>
       <p id="updateStatus" class="hint" hidden></p>
 
-      <p class="hint version-line">Movie Night <span id="versionText"></span></p>
+      <p class="hint version-line">Movie Picker <span id="versionText"></span></p>
     </div>
   </div>
 
