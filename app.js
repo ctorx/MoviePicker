@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.8.4";
+const APP_VERSION = "2.9.0";
 
 // ---------- State (localStorage) ----------
 
@@ -173,6 +173,7 @@ function excludedIds() {
 }
 
 let lastShownId = null; // keeps a literal skip from re-serving the same movie immediately
+const sessionShown = new Set(); // everything shown since the last search change
 
 function shuffle(arr) {
   for (let i = arr.length - 1; i > 0; i--) {
@@ -198,6 +199,37 @@ async function pickMovie() {
 
     if (first.total_results === 0) {
       showPickError("No movies match: " + searchSummary() + ". Try relaxing a filter.");
+      return;
+    }
+
+    // Small pools: random pages would repeat movies after a few skips.
+    // Walk the entire result set instead, never repeating until it's spent.
+    if (first.total_results < 100) {
+      const pages = [first];
+      for (let p = 2; p <= Math.min(first.total_pages, 5); p++) {
+        pages.push(await tmdbFetch("/discover/movie", discoverParams(p)));
+        if (token !== pickToken) return;
+      }
+      const pool = pages
+        .flatMap((d) => d.results)
+        .filter((m) => !excluded.has(m.id) && m.poster_path);
+      let fresh = pool.filter((m) => !sessionShown.has(m.id));
+      if (!fresh.length) {
+        // Whole pool seen this session — start the cycle over.
+        sessionShown.clear();
+        fresh = pool.filter((m) => m.id !== lastShownId);
+      }
+      for (const movie of fresh) {
+        const details = await tmdbFetch("/movie/" + movie.id, {
+          append_to_response: "credits,videos,release_dates",
+        });
+        if (token !== pickToken) return;
+        sessionShown.add(movie.id); // cert-rejected too, so we don't refetch them
+        if (!certAllowed(details) || !directorOk(details)) continue;
+        renderMovie(details);
+        return;
+      }
+      showPickError("You've been through everything that matches this search. Try widening it.");
       return;
     }
 
@@ -240,7 +272,7 @@ async function pickMovie() {
 async function openMovieById(id) {
   const token = ++pickToken; // cancel any in-flight pick
   showPickState("loading");
-  closeAllModals();
+  navHome();
   try {
     const details = await tmdbFetch("/movie/" + id, {
       append_to_response: "credits,videos,release_dates",
@@ -308,6 +340,7 @@ function fillMeta(el, m) {
 
 function renderMovie(m) {
   current = m;
+  sessionShown.add(m.id);
 
   $("poster").src = m.poster_path ? IMG + m.poster_path : "";
   $("poster").alt = m.title + " poster";
@@ -392,43 +425,85 @@ function refreshCounts() {
   $("cntBlocked").textContent = n(lists.blocked) || "";
 }
 
-// ---------- Modals & drawer ----------
+// ---------- Navigation (URL hash <-> overlays) ----------
+// Every overlay gets a history entry (#search, #info, #settings, #menu,
+// #list-*, #trailer) so the browser/phone back button closes it instead of
+// exiting the app. The hash is the single source of truth for what's open.
 
 const MODALS = ["modalSearch", "modalInfo", "modalList", "modalSettings"];
 
-function openModal(id) {
-  $(id).hidden = false;
-  $(id).scrollTop = 0;
-  document.body.classList.add("no-scroll");
+function navPush(frag) {
+  if (location.hash === "#" + frag) {
+    applyHash();
+    return;
+  }
+  const depth = (history.state && history.state.depth) || 0;
+  history.pushState({ depth: depth + 1 }, "", "#" + frag);
+  applyHash();
 }
 
-function closeModal(id) {
-  $(id).hidden = true;
-  if (MODALS.every((m) => $(m).hidden)) document.body.classList.remove("no-scroll");
+function navBack() {
+  if (((history.state && history.state.depth) || 0) > 0) history.back();
 }
 
-function closeAllModals() {
-  MODALS.forEach((m) => ($(m).hidden = true));
-  document.body.classList.remove("no-scroll");
-  closeDrawer();
+// Pop every overlay entry at once (e.g. opening a movie from a list).
+function navHome() {
+  const depth = (history.state && history.state.depth) || 0;
+  if (depth > 0) history.go(-depth);
 }
+
+function setShown(id, shown) {
+  const el = $(id);
+  if (shown && el.hidden) {
+    el.hidden = false;
+    el.scrollTop = 0;
+  } else if (!shown) {
+    el.hidden = true;
+  }
+}
+
+function applyHash() {
+  const h = location.hash.replace(/^#/, "");
+  document.body.classList.toggle("drawer-open", h === "menu");
+
+  const listName = h.startsWith("list-") ? h.slice(5) : null;
+  if (listName && LIST_LABELS[listName]) {
+    if (openListName !== listName) {
+      openListName = listName;
+      $("listTitle").textContent = LIST_LABELS[listName];
+    }
+    renderList();
+    setShown("modalList", true);
+  } else {
+    setShown("modalList", false);
+  }
+
+  setShown("modalSearch", h === "search");
+  setShown("modalSettings", h === "settings");
+  setShown("modalInfo", h === "info" || h === "trailer");
+
+  if (h === "trailer") {
+    $("trailerOverlay").hidden = false; // content was set by openTrailer
+  } else if (!$("trailerOverlay").hidden) {
+    closeTrailerUI();
+  }
+
+  document.body.classList.toggle("no-scroll", MODALS.some((id) => !$(id).hidden));
+}
+
+window.addEventListener("popstate", applyHash);
 
 document.querySelectorAll(".modal-close").forEach((btn) => {
-  btn.addEventListener("click", () => closeModal(btn.dataset.close));
+  btn.addEventListener("click", navBack);
 });
 
-$("btnInfoBack").addEventListener("click", () => closeModal("modalInfo"));
+$("btnInfoBack").addEventListener("click", navBack);
 
-function openDrawer() {
+$("btnMenu").addEventListener("click", () => {
   refreshCounts();
-  document.body.classList.add("drawer-open");
-}
-function closeDrawer() {
-  document.body.classList.remove("drawer-open");
-}
-
-$("btnMenu").addEventListener("click", openDrawer);
-$("drawerOverlay").addEventListener("click", closeDrawer);
+  navPush("menu");
+});
+$("drawerOverlay").addEventListener("click", navBack);
 
 // ---------- Search ----------
 
@@ -490,8 +565,7 @@ function openSearch() {
   if (search.advanced) renderGenreChips();
   updateCertHint();
   $("searchError").hidden = true;
-  closeDrawer();
-  openModal("modalSearch");
+  navPush("search");
 }
 
 $("btnSearch").addEventListener("click", openSearch);
@@ -575,7 +649,8 @@ $("btnApplySearch").addEventListener("click", async () => {
       search.directorIds = [];
       search.directorNames = [];
     }
-    closeModal("modalSearch");
+    sessionShown.clear();
+    navBack();
     show("screen-pick");
     pickMovie();
   } catch (err) {
@@ -637,7 +712,7 @@ function openInfo() {
   trailerKey = trailerKeyFor(m);
   $("btnTrailer").hidden = !trailerKey;
   $("lnkCSM").href = "https://www.commonsensemedia.org/movie-reviews/" + csmSlug(m.title);
-  openModal("modalInfo");
+  navPush("info");
 }
 
 // Common Sense Media review slugs are the lowercased title with punctuation
@@ -675,8 +750,8 @@ async function openTrailer(key) {
     "https://www.youtube-nocookie.com/embed/" + key +
     "?autoplay=1&playsinline=1&rel=0";
   $("lnkTrailerYT").href = "https://www.youtube.com/watch?v=" + key;
+  navPush("trailer");
   const overlay = $("trailerOverlay");
-  overlay.hidden = false;
   try {
     if (overlay.requestFullscreen) await overlay.requestFullscreen();
     else if (overlay.webkitRequestFullscreen) overlay.webkitRequestFullscreen();
@@ -688,7 +763,8 @@ async function openTrailer(key) {
   }
 }
 
-function closeTrailer() {
+// Visual teardown only — navigation state is handled by the hash.
+function closeTrailerUI() {
   $("trailerOverlay").hidden = true;
   $("trailerFrame").src = "";
   try {
@@ -698,9 +774,9 @@ function closeTrailer() {
 }
 
 $("btnTrailer").addEventListener("click", () => openTrailer(trailerKey));
-$("btnCloseTrailer").addEventListener("click", closeTrailer);
+$("btnCloseTrailer").addEventListener("click", navBack);
 document.addEventListener("fullscreenchange", () => {
-  if (!document.fullscreenElement && !$("trailerOverlay").hidden) closeTrailer();
+  if (!document.fullscreenElement && !$("trailerOverlay").hidden) navBack();
 });
 
 // ---------- Card actions & swiping ----------
@@ -849,23 +925,10 @@ const LIST_LABELS = {
 let openListName = null;
 
 document.querySelectorAll(".drawer-item[data-list]").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    closeDrawer();
-    openList(btn.dataset.list);
-  });
+  btn.addEventListener("click", () => navPush("list-" + btn.dataset.list));
 });
 
-$("drawerSettings").addEventListener("click", () => {
-  closeDrawer();
-  openSettings();
-});
-
-function openList(name) {
-  openListName = name;
-  $("listTitle").textContent = LIST_LABELS[name];
-  renderList();
-  openModal("modalList");
-}
+$("drawerSettings").addEventListener("click", () => openSettings());
 
 function renderList() {
   const ul = $("listItems");
@@ -993,7 +1056,7 @@ function openSettings() {
   $("updateStatus").hidden = true;
   $("btnApplyUpdate").hidden = true;
   $("versionText").textContent = "v" + APP_VERSION;
-  openModal("modalSettings");
+  navPush("settings");
 }
 
 $("btnSaveKeySettings").addEventListener("click", async () => {
@@ -1152,6 +1215,9 @@ $("btnSaveKey").addEventListener("click", async () => {
 $("btnRetry").addEventListener("click", pickMovie);
 
 // ---------- Boot ----------
+
+// Start with a clean history baseline: no overlay open, depth 0.
+history.replaceState({ depth: 0 }, "", location.pathname + location.search);
 
 refreshCounts();
 
