@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.4.1";
+const APP_VERSION = "2.4.2";
 
 // ---------- State (localStorage) ----------
 
@@ -606,9 +606,21 @@ function openInfo() {
 
   trailerKey = trailerKeyFor(m);
   $("btnTrailer").hidden = !trailerKey;
-  $("lnkCSM").href =
-    "https://www.commonsensemedia.org/search/" + encodeURIComponent(m.title);
+  $("lnkCSM").href = "https://www.commonsensemedia.org/movie-reviews/" + csmSlug(m.title);
   openModal("modalInfo");
+}
+
+// Common Sense Media review slugs are the lowercased title with punctuation
+// dropped, e.g. "Spider-Man: Into the Spider-Verse" -> spider-man-into-the-spider-verse
+function csmSlug(title) {
+  return title
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/&/g, " and ")
+    .replace(/['’]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 
