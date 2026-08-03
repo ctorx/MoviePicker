@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.9.0";
+const APP_VERSION = "2.10.0";
 
 // ---------- State (localStorage) ----------
 
@@ -49,8 +49,15 @@ const search = {
   director: "",
   directorIds: [],
   directorNames: [],
+  composer: "",
+  composerIds: [],
+  composerNames: [],
   maxRuntime: 150,
 };
+
+function effectiveAge() {
+  return settings.age || 21; // blank age searches as an adult-but-not-R+ default
+}
 
 // ---------- TMDB API ----------
 
@@ -95,32 +102,33 @@ function certOf(m) {
 // TMDB's certification.lte filter leaks unrated and miscertified titles, so
 // every pick is re-checked against the movie's real US certification below.
 function certAllowed(m) {
-  if (settings.age >= 17) return true;
+  if (effectiveAge() >= 17) return true;
   const cert = certOf(m);
-  const max = CERT_RANK[certForAge(settings.age)];
+  const max = CERT_RANK[certForAge(effectiveAge())];
   return cert in CERT_RANK && CERT_RANK[cert] <= max;
 }
 
 function discoverParams(page) {
   const p = {
     certification_country: "US",
-    "certification.lte": certForAge(settings.age),
-    "primary_release_date.gte": settings.fromYear + "-01-01",
+    "certification.lte": certForAge(effectiveAge()),
     sort_by: "popularity.desc",
     include_adult: "false",
     "vote_count.gte": "200",   // enough votes that the score means something
     "vote_average.gte": "6",   // quality floor so picks are watchable
     page: String(page),
   };
+  if (settings.fromYear) p["primary_release_date.gte"] = settings.fromYear + "-01-01";
   if (search.advanced) {
     if (search.genres.size) p.with_genres = [...search.genres].join(",");
     if (search.actorIds.length) p.with_cast = search.actorIds.join(",");
-    if (search.directorIds.length) p.with_crew = search.directorIds.join(",");
-    if (search.actorIds.length || search.directorIds.length) {
+    const crewIds = [...search.directorIds, ...search.composerIds];
+    if (crewIds.length) p.with_crew = crewIds.join(",");
+    if (search.actorIds.length || crewIds.length) {
       // Personal filmographies are small; the popularity floors would empty them out.
       p["vote_count.gte"] = "10";
       delete p["vote_average.gte"];
-      if (settings.age >= 17) {
+      if (effectiveAge() >= 17) {
         // The certification join excludes anything TMDB has no US rating for,
         // which guts person searches. Adults don't need it (picks are verified).
         delete p.certification_country;
@@ -132,23 +140,32 @@ function discoverParams(page) {
   return p;
 }
 
-// with_crew matches any crew role, so confirm the person actually directed.
-function directorOk(m) {
-  if (!search.advanced || !search.directorIds.length) return true;
+// with_crew matches any crew role, so confirm the actual job on each pick.
+function crewOk(m) {
+  if (!search.advanced) return true;
   const crew = m.credits?.crew || [];
-  return crew.some((c) => c.job === "Director" && search.directorIds.includes(c.id));
+  if (search.directorIds.length &&
+      !crew.some((c) => c.job === "Director" && search.directorIds.includes(c.id))) {
+    return false;
+  }
+  if (search.composerIds.length &&
+      !crew.some((c) => search.composerIds.includes(c.id) && /composer|music/i.test(c.job || ""))) {
+    return false;
+  }
+  return true;
 }
 
 function searchSummary() {
   const bits = [];
-  if (settings.age < 17) bits.push("rated " + certForAge(settings.age) + " or under");
-  bits.push(settings.fromYear + " and newer");
+  if (effectiveAge() < 17) bits.push("rated " + certForAge(effectiveAge()) + " or under");
+  if (settings.fromYear) bits.push(settings.fromYear + " and newer");
   if (search.advanced) {
     if (search.genres.size && genreCache) {
       bits.push(genreCache.filter((g) => search.genres.has(g.id)).map((g) => g.name).join("/"));
     }
     if (search.actorNames.length) bits.push("with " + search.actorNames.join(" & "));
     if (search.directorNames.length) bits.push("directed by " + search.directorNames.join(" & "));
+    if (search.composerNames.length) bits.push("music by " + search.composerNames.join(" & "));
     if (search.maxRuntime) bits.push("under " + runtimeText(search.maxRuntime));
   }
   return bits.join(" · ");
@@ -225,7 +242,7 @@ async function pickMovie() {
         });
         if (token !== pickToken) return;
         sessionShown.add(movie.id); // cert-rejected too, so we don't refetch them
-        if (!certAllowed(details) || !directorOk(details)) continue;
+        if (!certAllowed(details) || !crewOk(details)) continue;
         renderMovie(details);
         return;
       }
@@ -256,7 +273,7 @@ async function pickMovie() {
           append_to_response: "credits,videos,release_dates",
         });
         if (token !== pickToken) return;
-        if (!certAllowed(details) || !directorOk(details)) continue;
+        if (!certAllowed(details) || !crewOk(details)) continue;
         renderMovie(details);
         return;
       }
@@ -511,7 +528,7 @@ function updateCertHint() {
   const age = parseInt($("inpAge").value, 10);
   $("certHint").textContent = Number.isFinite(age) && age > 0
     ? `Movies rated up to ${certForAge(age)} will be included.`
-    : "Sets the maximum movie rating (G, PG, PG-13, R).";
+    : "Blank = 21 (movies rated up to R).";
 }
 
 function buildRuntimeOptions() {
@@ -554,13 +571,13 @@ async function renderGenreChips() {
 }
 
 function openSearch() {
-  if (settings.age) $("inpAge").value = settings.age;
-  if (settings.fromYear) $("inpYear").value = settings.fromYear;
-  $("inpYear").placeholder = "blank = " + (new Date().getFullYear() - 5);
+  $("inpAge").value = settings.age || "";
+  $("inpYear").value = settings.fromYear || "";
   $("chkAdvanced").checked = search.advanced;
   $("advancedBox").hidden = !search.advanced;
   $("inpActors").value = search.actors;
   $("inpDirector").value = search.director;
+  $("inpComposer").value = search.composer;
   buildRuntimeOptions();
   if (search.advanced) renderGenreChips();
   updateCertHint();
@@ -600,16 +617,16 @@ $("btnApplySearch").addEventListener("click", async () => {
   errEl.hidden = true;
 
   const thisYear = new Date().getFullYear();
-  const age = $("inpAge").value.trim() ? parseInt($("inpAge").value, 10) : 21;
-  const year = $("inpYear").value.trim() ? parseInt($("inpYear").value, 10) : thisYear - 5;
+  const age = $("inpAge").value.trim() ? parseInt($("inpAge").value, 10) : null;
+  const year = $("inpYear").value.trim() ? parseInt($("inpYear").value, 10) : null;
 
-  if (!Number.isFinite(age) || age < 1 || age > 120) {
-    errEl.textContent = "Enter the youngest viewer's age (1–120).";
+  if (age !== null && (!Number.isFinite(age) || age < 1 || age > 120)) {
+    errEl.textContent = "Enter the youngest viewer's age (1–120), or leave it blank for 21.";
     errEl.hidden = false;
     return;
   }
-  if (!Number.isFinite(year) || year < 1930 || year > thisYear) {
-    errEl.textContent = `Enter a year between 1930 and ${thisYear}.`;
+  if (year !== null && (!Number.isFinite(year) || year < 1930 || year > thisYear)) {
+    errEl.textContent = `Enter a year between 1930 and ${thisYear}, or leave it blank for all time.`;
     errEl.hidden = false;
     return;
   }
@@ -625,10 +642,12 @@ $("btnApplySearch").addEventListener("click", async () => {
     if (search.advanced) {
       search.actors = $("inpActors").value;
       search.director = $("inpDirector").value;
+      search.composer = $("inpComposer").value;
       search.maxRuntime = $("selRuntime").value ? parseInt($("selRuntime").value, 10) : 0;
       const actors = await resolveActors(search.actors);
       const directors = await resolveActors(search.director);
-      const missing = [...actors.missing, ...directors.missing];
+      const composers = await resolveActors(search.composer);
+      const missing = [...actors.missing, ...directors.missing, ...composers.missing];
       if (missing.length) {
         errEl.textContent = "Couldn't find: " + missing.join(", ");
         errEl.hidden = false;
@@ -638,16 +657,15 @@ $("btnApplySearch").addEventListener("click", async () => {
       search.actorNames = actors.resolved;
       search.directorIds = directors.ids;
       search.directorNames = directors.resolved;
-      // Confirms who the names matched, so a typo is easy to catch.
-      const who = [];
-      if (actors.resolved.length) who.push("with " + actors.resolved.join(" & "));
-      if (directors.resolved.length) who.push("directed by " + directors.resolved.join(" & "));
-      if (who.length) showToast("Movies " + who.join(", "));
+      search.composerIds = composers.ids;
+      search.composerNames = composers.resolved;
     } else {
       search.actorIds = [];
       search.actorNames = [];
       search.directorIds = [];
       search.directorNames = [];
+      search.composerIds = [];
+      search.composerNames = [];
     }
     sessionShown.clear();
     navBack();
@@ -674,20 +692,46 @@ function openInfo() {
   $("infoOverview").textContent = m.overview || "No description available.";
 
   const crew = m.credits?.crew || [];
-  const crewNames = (job) => crew.filter((c) => c.job === job).map((c) => c.name);
-  const directors = crewNames("Director");
-  $("infoDirector").textContent = directors.length ? "Directed by: " + directors.join(", ") : "";
+  const crewPeople = (job) => crew.filter((c) => c.job === job);
 
-  const cast = (m.credits?.cast || []).slice(0, 10).map((c) => c.name).join(", ");
-  $("infoCast").textContent = cast ? "Starring: " + cast : "";
+  // Tapping a name searches that person's whole filmography (all time, age 21).
+  const personLink = (kind) => (p) => {
+    const s = document.createElement("span");
+    s.className = "person-link";
+    s.textContent = p.name;
+    s.addEventListener("click", () => forcePersonSearch(kind, p.id, p.name));
+    return s;
+  };
+  const nameList = (el, prefix, people, kind) => {
+    el.textContent = "";
+    if (!people.length) return;
+    if (prefix) el.append(prefix);
+    people.forEach((p, i) => {
+      if (i) el.append(", ");
+      el.appendChild(personLink(kind)(p));
+    });
+  };
+
+  const directors = crewPeople("Director");
+  nameList($("infoDirector"), "Directed by: ", directors, "director");
+  nameList($("infoCast"), "Starring: ", (m.credits?.cast || []).slice(0, 10), "actor");
 
   const money = (n) =>
     n >= 1e6 ? "$" + (n / 1e6).toFixed(n >= 1e8 ? 0 : 1) + "M" : "$" + n.toLocaleString();
   const rows = [];
-  const writers = [...new Set([...crewNames("Screenplay"), ...crewNames("Writer")])];
+  const writers = [...new Set(
+    [...crewPeople("Screenplay"), ...crewPeople("Writer")].map((c) => c.name)
+  )];
   if (writers.length) rows.push(["Written by", writers.slice(0, 4).join(", ")]);
-  const composers = crewNames("Original Music Composer");
-  if (composers.length) rows.push(["Music", composers.join(", ")]);
+  const composers = crewPeople("Original Music Composer");
+  if (composers.length) {
+    const frag = document.createElement("span");
+    composers.forEach((p, i) => {
+      if (i) frag.append(", ");
+      frag.appendChild(personLink("composer")(p));
+    });
+    rows.push(["Music", frag]);
+  }
   const countries = (m.production_countries || []).map((c) => c.name);
   if (countries.length) rows.push(["Country", countries.join(", ")]);
   if (m.budget) rows.push(["Budget", money(m.budget)]);
@@ -704,7 +748,8 @@ function openInfo() {
     k.className = "extra-k";
     k.textContent = label;
     const v = document.createElement("span");
-    v.textContent = value;
+    if (typeof value === "string") v.textContent = value;
+    else v.appendChild(value);
     row.append(k, v);
     extra.appendChild(row);
   }
@@ -713,6 +758,31 @@ function openInfo() {
   $("btnTrailer").hidden = !trailerKey;
   $("lnkCSM").href = "https://www.commonsensemedia.org/movie-reviews/" + csmSlug(m.title);
   navPush("info");
+}
+
+// A person tap in the info screen becomes a fresh advanced search for just
+// that person: all time (blank year), blank age (21), no other filters.
+function forcePersonSearch(kind, id, name) {
+  search.advanced = true;
+  search.genres.clear();
+  search.maxRuntime = 0;
+  search.actors = ""; search.actorIds = []; search.actorNames = [];
+  search.director = ""; search.directorIds = []; search.directorNames = [];
+  search.composer = ""; search.composerIds = []; search.composerNames = [];
+  if (kind === "actor") {
+    search.actors = name; search.actorIds = [id]; search.actorNames = [name];
+  } else if (kind === "director") {
+    search.director = name; search.directorIds = [id]; search.directorNames = [name];
+  } else {
+    search.composer = name; search.composerIds = [id]; search.composerNames = [name];
+  }
+  settings.age = null;
+  settings.fromYear = null;
+  saveSettings();
+  sessionShown.clear();
+  navHome();
+  show("screen-pick");
+  pickMovie();
 }
 
 // Common Sense Media review slugs are the lowercased title with punctuation
@@ -1224,10 +1294,7 @@ refreshCounts();
 if (!settings.apiKey) {
   show("screen-setup");
 } else {
+  // Blank age/year have sensible defaults now, so always start picking.
   show("screen-pick");
-  if (settings.age && settings.fromYear) {
-    pickMovie();
-  } else {
-    openSearch();
-  }
+  pickMovie();
 }

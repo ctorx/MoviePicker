@@ -90,8 +90,8 @@
       <p class="hint" id="certHint"></p>
 
       <label for="inpYear"><strong>Oldest year</strong> to draw from</label>
-      <input id="inpYear" type="number" min="1930" inputmode="numeric">
-      <p class="hint">Movies from this year and newer are fair game.</p>
+      <input id="inpYear" type="number" min="1930" inputmode="numeric" placeholder="blank = all time">
+      <p class="hint">Movies from this year and newer are fair game. Blank means no limit.</p>
 
       <label class="toggle-row">
         <input type="checkbox" id="chkAdvanced">
@@ -108,6 +108,9 @@
 
         <label for="inpDirector">Director</label>
         <input id="inpDirector" type="text" autocomplete="off" placeholder="e.g. Steven Spielberg">
+
+        <label for="inpComposer">Composer</label>
+        <input id="inpComposer" type="text" autocomplete="off" placeholder="e.g. John Williams">
 
         <label for="selRuntime">Max length</label>
         <select id="selRuntime"></select>

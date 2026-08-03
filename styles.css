@@ -419,14 +419,26 @@ button:active { transform: scale(0.98); }
 
 #infoOverview { margin-top: 16px; }
 
+/* Info reads a notch larger than the rest of the app. */
+#modalInfo .modal-body { font-size: 1.05rem; }
+#modalInfo .hint { font-size: 0.95rem; }
+
 .info-extra { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 10px; }
 .extra-row {
   display: flex;
   gap: 12px;
   padding: 3px 0;
-  font-size: 0.9rem;
+  font-size: 0.95rem;
 }
-.extra-k { color: var(--muted); flex: 0 0 84px; }
+.extra-k { color: var(--muted); flex: 0 0 90px; }
+
+.person-link {
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 3px;
+}
 
 /* Trailer player */
 .trailer-overlay {
