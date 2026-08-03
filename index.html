@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Movie Night</title>
+  <meta name="description" content="Help a group pick a movie to watch.">
+  <meta name="theme-color" content="#14181c">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon.svg">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main>
+    <header>
+      <span class="brand">🎬 Movie Night</span>
+      <button id="btnSettings" class="icon-btn" title="Settings" hidden>⚙️</button>
+    </header>
+
+    <!-- First run: TMDB API key -->
+    <section id="screen-setup" hidden>
+      <h1>One-time setup</h1>
+      <p>This app uses <a href="https://www.themoviedb.org/" target="_blank" rel="noopener">TMDB</a>, a free movie database. You need a free API key:</p>
+      <ol>
+        <li>Create a free account at <a href="https://www.themoviedb.org/signup" target="_blank" rel="noopener">themoviedb.org/signup</a></li>
+        <li>Go to <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">Settings → API</a> and request a key (choose "Developer", any app name works)</li>
+        <li>Paste the <strong>API Key</strong> (or the long "Read Access Token") below</li>
+      </ol>
+      <label for="inpKey">TMDB API key</label>
+      <input id="inpKey" type="text" autocomplete="off" spellcheck="false" placeholder="Paste key here">
+      <p id="setupError" class="error" hidden></p>
+      <button id="btnSaveKey" class="primary">Save &amp; continue</button>
+      <p class="hint">The key is stored only on this device.</p>
+    </section>
+
+    <!-- Questions -->
+    <section id="screen-questions" hidden>
+      <h1>Who's watching?</h1>
+      <label for="inpAge">How old is the <strong>youngest</strong> person watching?</label>
+      <input id="inpAge" type="number" min="1" max="120" inputmode="numeric" placeholder="e.g. 12">
+      <p class="hint" id="certHint"></p>
+
+      <label for="inpYear"><strong>Oldest year</strong> to draw from</label>
+      <input id="inpYear" type="number" min="1930" inputmode="numeric" placeholder="e.g. 2010">
+      <p class="hint">Movies from this year and newer are fair game.</p>
+
+      <p id="questionsError" class="error" hidden></p>
+      <button id="btnStart" class="primary">Pick a movie</button>
+
+      <div class="lists-box">
+        <h2>Your lists</h2>
+        <p id="listCounts"></p>
+        <div class="row">
+          <button id="btnClearSkipped" class="small">Clear skipped</button>
+          <button id="btnClearSeen" class="small">Clear seen</button>
+          <button id="btnClearNever" class="small">Clear never</button>
+        </div>
+        <button id="btnChangeKey" class="link-btn">Change API key</button>
+      </div>
+    </section>
+
+    <!-- Pick -->
+    <section id="screen-pick" hidden>
+      <div id="loading" hidden>
+        <div class="spinner"></div>
+        <p>Finding a movie…</p>
+      </div>
+
+      <div id="pickError" class="center" hidden>
+        <p id="pickErrorMsg" class="error"></p>
+        <button id="btnRetry" class="primary">Try again</button>
+        <button id="btnBackToQuestions" class="link-btn">Change settings</button>
+      </div>
+
+      <div id="card" hidden>
+        <img id="poster" alt="Movie poster">
+        <h2 id="movieTitle"></h2>
+        <p id="movieMeta"></p>
+        <button id="btnDetails" class="link-btn">More info ▾</button>
+        <div id="details" hidden>
+          <p id="movieOverview"></p>
+          <p id="movieCast"></p>
+          <p id="movieExtra"></p>
+        </div>
+      </div>
+
+      <div id="actions" class="actions" hidden>
+        <button id="btnSkip" title="Not tonight — won't come up again unless you clear skips">⏭️ Skip</button>
+        <button id="btnSeen" title="Already watched it">👀 Seen it</button>
+        <button id="btnNever" title="Never show this movie again">🚫 Never</button>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
