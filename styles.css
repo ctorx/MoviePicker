@@ -1,5 +1,9 @@
 * { box-sizing: border-box; }
 
+/* Some components set their own display (flex etc.), which would silently
+   override the hidden attribute — this keeps hidden meaning hidden. */
+[hidden] { display: none !important; }
+
 :root {
   --bg: #14181c;
   --card: #1e252c;
@@ -26,7 +30,11 @@ body.no-scroll { overflow: hidden; }
 main {
   max-width: 480px;
   margin: 0 auto;
-  padding: 12px 16px 32px;
+  padding: 12px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  min-height: 100dvh;
 }
 
 header {
@@ -105,21 +113,42 @@ button:active { transform: scale(0.98); }
 
 /* ---------- Pick screen ---------- */
 
-#card { text-align: center; }
+/* The whole screen is a flex column so the poster can grow into whatever
+   height is left after the title, meta, More info, and action buttons. */
+#screen-pick {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+#card {
+  text-align: center;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
 
 #swipeArea {
-  touch-action: pan-y;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  touch-action: none; /* all four swipe directions belong to the card */
   will-change: transform;
   user-select: none;
   -webkit-user-select: none;
 }
 
-/* Fixed-size poster box: dynamic cap so meta + More info stay on screen. */
+/* Grows to fill the free space; the max-height keeps the 2:3 box no wider
+   than the column so nothing is pushed out of the viewport and no cropping. */
 .poster-wrap {
   position: relative;
-  height: min(44vh, 400px);
-  height: min(44dvh, 400px);
+  flex: 1;
+  min-height: 0;
   aspect-ratio: 2 / 3;
+  max-height: calc((min(100vw, 480px) - 32px) * 1.5);
   margin: 0 auto;
   border-radius: var(--radius);
   background: var(--card);
@@ -187,6 +216,22 @@ button:active { transform: scale(0.98); }
   background: rgba(0, 0, 0, 0.4);
   transform: rotate(12deg);
 }
+.badge-seen {
+  top: auto;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: var(--accent);
+  border: 3px solid var(--accent);
+  background: rgba(0, 0, 0, 0.4);
+}
+.badge-block {
+  left: 50%;
+  transform: translateX(-50%);
+  color: var(--danger);
+  border: 3px solid var(--danger);
+  background: rgba(0, 0, 0, 0.4);
+}
 
 #movieTitle { font-size: 1.3rem; margin: 12px 0 4px; }
 #movieMeta { color: var(--muted); margin: 0; }
@@ -252,6 +297,7 @@ button:active { transform: scale(0.98); }
 #card.loading .cert { border-color: transparent; }
 @keyframes shimmer { to { background-position: -200% 0; } }
 
+#loading, #pickError { margin: auto; width: 100%; }
 #loading { text-align: center; padding: 48px 0; color: var(--muted); }
 
 .spinner {
@@ -346,7 +392,42 @@ button:active { transform: scale(0.98); }
 }
 .trailer-btn svg { width: 16px; height: 16px; }
 
+.csm-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-weight: 600;
+  text-decoration: none;
+  align-self: flex-start;
+}
+.csm-btn svg { width: 16px; height: 16px; }
+
 #infoOverview { margin-top: 16px; }
+
+/* Trailer player */
+.trailer-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: #000;
+  display: flex;
+  flex-direction: column;
+}
+.trailer-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+}
+.trailer-top a { color: var(--muted); font-size: 0.9rem; text-decoration: none; }
+.trailer-top .icon-btn { color: #fff; }
+#trailerFrame { flex: 1; width: 100%; border: 0; }
 
 /* Saved lists */
 .movie-list { list-style: none; margin: 12px 0 0; padding: 0; }

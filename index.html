@@ -63,6 +63,8 @@
             </button>
             <div class="swipe-badge badge-skip" id="badgeSkip">SKIP</div>
             <div class="swipe-badge badge-fav" id="badgeFav">❤</div>
+            <div class="swipe-badge badge-seen" id="badgeSeen">SEEN</div>
+            <div class="swipe-badge badge-block" id="badgeBlock">BLOCK</div>
           </div>
           <h2 id="movieTitle"></h2>
           <p id="movieMeta"></p>
@@ -140,9 +142,13 @@
         <div>
           <p id="infoMeta" class="hint"></p>
           <p id="infoGenres" class="hint"></p>
-          <a id="lnkTrailer" class="trailer-btn" target="_blank" rel="noopener" hidden>
+          <button id="btnTrailer" class="trailer-btn" hidden>
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5l11 7-11 7V5z" fill="currentColor"/></svg>
             Watch trailer
+          </button>
+          <a id="lnkCSM" class="csm-btn" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6M20 4L10 14M9 5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Common Sense Media
           </a>
         </div>
       </div>
@@ -206,6 +212,16 @@
     <hr>
     <button class="drawer-item" id="drawerSettings">⚙️ Settings</button>
   </nav>
+
+  <div id="trailerOverlay" class="trailer-overlay" hidden>
+    <div class="trailer-top">
+      <a id="lnkTrailerYT" target="_blank" rel="noopener">Open on YouTube ↗</a>
+      <button id="btnCloseTrailer" class="icon-btn" title="Close">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="5" y1="5" x2="19" y2="19" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="19" y1="5" x2="5" y2="19" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <iframe id="trailerFrame" title="Trailer" allow="autoplay; fullscreen; encrypted-media" allowfullscreen></iframe>
+  </div>
 
   <div id="toast" class="toast" hidden>
     <span id="toastMsg"></span>

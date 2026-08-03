@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.0.0";
+const APP_VERSION = "2.1.0";
 
 // ---------- State (localStorage) ----------
 
@@ -516,16 +516,54 @@ function openInfo() {
     vids.find((v) => v.site === "YouTube" && v.type === "Trailer" && v.official) ||
     vids.find((v) => v.site === "YouTube" && v.type === "Trailer") ||
     vids.find((v) => v.site === "YouTube");
-  if (trailer) {
-    $("lnkTrailer").href = "https://www.youtube.com/watch?v=" + trailer.key;
-    $("lnkTrailer").hidden = false;
-  } else {
-    $("lnkTrailer").hidden = true;
-  }
+  trailerKey = trailer ? trailer.key : null;
+  $("btnTrailer").hidden = !trailerKey;
+  $("lnkCSM").href =
+    "https://www.commonsensemedia.org/search/" + encodeURIComponent(m.title);
   openModal("modalInfo");
 }
 
 $("btnDetails").addEventListener("click", openInfo);
+
+// ---------- Trailer player ----------
+
+// Embedded player instead of a YouTube link so we can go fullscreen and
+// (where the browser allows it — Android, not iOS) lock landscape.
+let trailerKey = null;
+
+async function openTrailer() {
+  if (!trailerKey) return;
+  $("trailerFrame").src =
+    "https://www.youtube-nocookie.com/embed/" + trailerKey +
+    "?autoplay=1&playsinline=1&rel=0";
+  $("lnkTrailerYT").href = "https://www.youtube.com/watch?v=" + trailerKey;
+  const overlay = $("trailerOverlay");
+  overlay.hidden = false;
+  try {
+    if (overlay.requestFullscreen) await overlay.requestFullscreen();
+    else if (overlay.webkitRequestFullscreen) overlay.webkitRequestFullscreen();
+    if (screen.orientation && screen.orientation.lock) {
+      await screen.orientation.lock("landscape");
+    }
+  } catch {
+    // Fullscreen or orientation lock refused — the overlay still covers the viewport.
+  }
+}
+
+function closeTrailer() {
+  $("trailerOverlay").hidden = true;
+  $("trailerFrame").src = "";
+  try {
+    if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock();
+  } catch {}
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+}
+
+$("btnTrailer").addEventListener("click", openTrailer);
+$("btnCloseTrailer").addEventListener("click", closeTrailer);
+document.addEventListener("fullscreenchange", () => {
+  if (!document.fullscreenElement && !$("trailerOverlay").hidden) closeTrailer();
+});
 
 // ---------- Card actions & swiping ----------
 
@@ -534,19 +572,21 @@ $("btnSeen").addEventListener("click", () => markCurrent("seen"));
 $("btnBlock").addEventListener("click", () => markCurrent("blocked"));
 $("btnFav").addEventListener("click", toggleFavorite);
 
+// Right = favorite, left = skip, up = seen, down = block.
 const swipeArea = $("swipeArea");
+const BADGES = ["badgeFav", "badgeSkip", "badgeSeen", "badgeBlock"];
 let drag = null;
 
 function resetSwipe() {
   swipeArea.style.transition = "";
   swipeArea.style.transform = "";
-  $("badgeFav").style.opacity = 0;
-  $("badgeSkip").style.opacity = 0;
+  for (const b of BADGES) $(b).style.opacity = 0;
 }
 
-function swipeOut(dir, done) {
+function swipeOut(axis, dir, done) {
   swipeArea.style.transition = "transform 0.25s ease-out";
-  swipeArea.style.transform = `translateX(${dir * 120}%) rotate(${dir * 12}deg)`;
+  swipeArea.style.transform =
+    axis === "x" ? `translateX(${dir * 120}%)` : `translateY(${dir * 120}%)`;
   setTimeout(() => {
     resetSwipe();
     done();
@@ -556,7 +596,7 @@ function swipeOut(dir, done) {
 swipeArea.addEventListener("pointerdown", (e) => {
   if (!current || $("card").classList.contains("loading")) return;
   if (e.target.closest("button")) return;
-  drag = { x: e.clientX, y: e.clientY, id: e.pointerId, active: false };
+  drag = { x: e.clientX, y: e.clientY, id: e.pointerId, active: false, axis: null };
 });
 
 swipeArea.addEventListener("pointermove", (e) => {
@@ -564,27 +604,43 @@ swipeArea.addEventListener("pointermove", (e) => {
   const dx = e.clientX - drag.x;
   const dy = e.clientY - drag.y;
   if (!drag.active) {
-    if (Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy)) {
+    if (Math.abs(dx) > 12 || Math.abs(dy) > 12) {
       drag.active = true;
+      drag.axis = Math.abs(dx) >= Math.abs(dy) ? "x" : "y";
       try { swipeArea.setPointerCapture(drag.id); } catch {}
-    } else if (Math.abs(dy) > 12) {
-      drag = null;
     }
     return;
   }
-  swipeArea.style.transform = `translateX(${dx}px) rotate(${dx / 30}deg)`;
-  $("badgeFav").style.opacity = Math.min(1, Math.max(0, dx / 90));
-  $("badgeSkip").style.opacity = Math.min(1, Math.max(0, -dx / 90));
+  const fade = (v) => Math.min(1, Math.max(0, v / 90));
+  if (drag.axis === "x") {
+    swipeArea.style.transform = `translateX(${dx}px)`;
+    $("badgeFav").style.opacity = fade(dx);
+    $("badgeSkip").style.opacity = fade(-dx);
+  } else {
+    swipeArea.style.transform = `translateY(${dy}px)`;
+    $("badgeSeen").style.opacity = fade(-dy);
+    $("badgeBlock").style.opacity = fade(dy);
+  }
 });
+
+function snapBack() {
+  swipeArea.style.transition = "transform 0.2s ease-out";
+  swipeArea.style.transform = "";
+  for (const b of BADGES) $(b).style.opacity = 0;
+  setTimeout(() => { swipeArea.style.transition = ""; }, 200);
+}
 
 function endDrag(e) {
   if (!drag) return;
   const wasActive = drag.active;
+  const axis = drag.axis;
   const dx = e.clientX - drag.x;
+  const dy = e.clientY - drag.y;
   drag = null;
   if (!wasActive) return;
-  if (dx > 90) {
-    swipeOut(1, () => {
+
+  if (axis === "x" && dx > 90) {
+    swipeOut("x", 1, () => {
       if (current && !lists.favorites[current.id]) {
         lists.favorites[current.id] = listEntry(current);
         saveLists();
@@ -593,14 +649,23 @@ function endDrag(e) {
       current = null;
       pickMovie();
     });
-  } else if (dx < -90) {
-    swipeOut(-1, () => markCurrent("skipped"));
+  } else if (axis === "x" && dx < -90) {
+    swipeOut("x", -1, () => markCurrent("skipped"));
+  } else if (axis === "y" && dy < -90) {
+    swipeOut("y", -1, () => markCurrent("seen"));
+  } else if (axis === "y" && dy > 90) {
+    const blocked = current;
+    swipeOut("y", 1, () => {
+      markCurrent("blocked");
+      // Blocking is easy to hit by accident on a vertical fling; offer a way back.
+      showToast(`Blocked "${blocked.title}"`, () => {
+        delete lists.blocked[blocked.id];
+        saveLists();
+        refreshCounts();
+      });
+    });
   } else {
-    swipeArea.style.transition = "transform 0.2s ease-out";
-    swipeArea.style.transform = "";
-    $("badgeFav").style.opacity = 0;
-    $("badgeSkip").style.opacity = 0;
-    setTimeout(() => { swipeArea.style.transition = ""; }, 200);
+    snapBack();
   }
 }
 
