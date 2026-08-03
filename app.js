@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.10.0";
+const APP_VERSION = "2.10.1";
 
 // ---------- State (localStorage) ----------
 
@@ -201,6 +201,7 @@ function shuffle(arr) {
 }
 
 let pickToken = 0; // ignore stale responses when the user re-searches mid-load
+let announceCount = false; // show a result-count toast after the next fetch (new searches only)
 
 async function pickMovie() {
   const token = ++pickToken;
@@ -213,6 +214,18 @@ async function pickMovie() {
     const excluded = excludedIds();
     const first = await tmdbFetch("/discover/movie", discoverParams(1));
     if (token !== pickToken) return;
+
+    if (announceCount) {
+      announceCount = false;
+      if (first.total_results > 0) {
+        showToast(
+          first.total_results.toLocaleString() +
+            (first.total_results === 1 ? " match" : " matches"),
+          null,
+          2000
+        );
+      }
+    }
 
     if (first.total_results === 0) {
       showPickError("No movies match: " + searchSummary() + ". Try relaxing a filter.");
@@ -668,6 +681,7 @@ $("btnApplySearch").addEventListener("click", async () => {
       search.composerNames = [];
     }
     sessionShown.clear();
+    announceCount = true;
     navBack();
     show("screen-pick");
     pickMovie();
@@ -780,6 +794,7 @@ function forcePersonSearch(kind, id, name) {
   settings.fromYear = null;
   saveSettings();
   sessionShown.clear();
+  announceCount = true;
   navHome();
   show("screen-pick");
   pickMovie();
@@ -1101,7 +1116,7 @@ function removeFromList(name, id, entry) {
 
 let toastTimer = null;
 
-function showToast(msg, undoFn) {
+function showToast(msg, undoFn, ms = 5000) {
   const toast = $("toast");
   $("toastMsg").textContent = msg;
   $("btnUndo").hidden = !undoFn;
@@ -1110,7 +1125,7 @@ function showToast(msg, undoFn) {
     : null;
   toast.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(hideToast, 5000);
+  toastTimer = setTimeout(hideToast, ms);
 }
 
 function hideToast() {
