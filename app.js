@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.1.0";
+const APP_VERSION = "2.2.0";
 
 // ---------- State (localStorage) ----------
 
@@ -43,6 +43,7 @@ const search = {
   genres: new Set(),
   actors: "",
   actorIds: [],
+  actorNames: [],
   maxRuntime: 120,
 };
 
@@ -111,12 +112,32 @@ function discoverParams(page) {
     if (search.actorIds.length) {
       p.with_cast = search.actorIds.join(",");
       // Actor filmographies are small; the popularity floors would empty them out.
-      p["vote_count.gte"] = "20";
+      p["vote_count.gte"] = "10";
       delete p["vote_average.gte"];
+      if (settings.age >= 17) {
+        // The certification join excludes anything TMDB has no US rating for,
+        // which guts actor searches. Adults don't need it (picks are verified).
+        delete p.certification_country;
+        delete p["certification.lte"];
+      }
     }
     if (search.maxRuntime) p["with_runtime.lte"] = String(search.maxRuntime);
   }
   return p;
+}
+
+function searchSummary() {
+  const bits = [];
+  if (settings.age < 17) bits.push("rated " + certForAge(settings.age) + " or under");
+  bits.push(settings.fromYear + " and newer");
+  if (search.advanced) {
+    if (search.genres.size && genreCache) {
+      bits.push(genreCache.filter((g) => search.genres.has(g.id)).map((g) => g.name).join("/"));
+    }
+    if (search.actorNames.length) bits.push("with " + search.actorNames.join(" & "));
+    if (search.maxRuntime) bits.push("under " + runtimeText(search.maxRuntime));
+  }
+  return bits.join(" · ");
 }
 
 let genreCache = null;
@@ -161,7 +182,7 @@ async function pickMovie() {
     if (token !== pickToken) return;
 
     if (first.total_results === 0) {
-      showPickError("No movies match. Try an earlier year, a different age, or fewer filters.");
+      showPickError("No movies match: " + searchSummary() + ". Try relaxing a filter.");
       return;
     }
 
@@ -333,6 +354,8 @@ const MODALS = ["modalSearch", "modalInfo", "modalList", "modalSettings"];
 function openModal(id) {
   $(id).hidden = false;
   $(id).scrollTop = 0;
+  const sheet = $(id).querySelector(".sheet");
+  if (sheet) sheet.scrollTop = 0;
   document.body.classList.add("no-scroll");
 }
 
@@ -349,6 +372,11 @@ function closeAllModals() {
 
 document.querySelectorAll(".modal-close").forEach((btn) => {
   btn.addEventListener("click", () => closeModal(btn.dataset.close));
+});
+
+// Tapping the dimmed backdrop around a sheet closes it.
+$("modalInfo").addEventListener("click", (e) => {
+  if (e.target === $("modalInfo")) closeModal("modalInfo");
 });
 
 function openDrawer() {
@@ -436,14 +464,19 @@ $("chkAdvanced").addEventListener("change", () => {
 async function resolveActors(namesText) {
   const names = namesText.split(",").map((s) => s.trim()).filter(Boolean);
   const ids = [];
+  const resolved = [];
   const missing = [];
   for (const name of names) {
     const r = await tmdbFetch("/search/person", { query: name });
     const hit = (r.results || [])[0];
-    if (hit) ids.push(hit.id);
-    else missing.push(name);
+    if (hit) {
+      ids.push(hit.id);
+      resolved.push(hit.name);
+    } else {
+      missing.push(name);
+    }
   }
-  return { ids, missing };
+  return { ids, resolved, missing };
 }
 
 $("btnApplySearch").addEventListener("click", async () => {
@@ -476,15 +509,19 @@ $("btnApplySearch").addEventListener("click", async () => {
     if (search.advanced) {
       search.actors = $("inpActors").value;
       search.maxRuntime = $("selRuntime").value ? parseInt($("selRuntime").value, 10) : 0;
-      const { ids, missing } = await resolveActors(search.actors);
+      const { ids, resolved, missing } = await resolveActors(search.actors);
       if (missing.length) {
         errEl.textContent = "Couldn't find: " + missing.join(", ");
         errEl.hidden = false;
         return;
       }
       search.actorIds = ids;
+      search.actorNames = resolved;
+      // Confirms who the names matched, so a typo is easy to catch.
+      if (resolved.length) showToast("Movies with " + resolved.join(" & "));
     } else {
       search.actorIds = [];
+      search.actorNames = [];
     }
     closeModal("modalSearch");
     show("screen-pick");
@@ -508,8 +545,42 @@ function openInfo() {
   fillMeta($("infoMeta"), m);
   $("infoGenres").textContent = (m.genres || []).map((g) => g.name).join(" · ");
   $("infoOverview").textContent = m.overview || "No description available.";
+
+  const crew = m.credits?.crew || [];
+  const crewNames = (job) => crew.filter((c) => c.job === job).map((c) => c.name);
+  const directors = crewNames("Director");
+  $("infoDirector").textContent = directors.length ? "Directed by: " + directors.join(", ") : "";
+
   const cast = (m.credits?.cast || []).slice(0, 10).map((c) => c.name).join(", ");
   $("infoCast").textContent = cast ? "Starring: " + cast : "";
+
+  const money = (n) =>
+    n >= 1e6 ? "$" + (n / 1e6).toFixed(n >= 1e8 ? 0 : 1) + "M" : "$" + n.toLocaleString();
+  const rows = [];
+  const writers = [...new Set([...crewNames("Screenplay"), ...crewNames("Writer")])];
+  if (writers.length) rows.push(["Written by", writers.slice(0, 4).join(", ")]);
+  const composers = crewNames("Original Music Composer");
+  if (composers.length) rows.push(["Music", composers.join(", ")]);
+  const countries = (m.production_countries || []).map((c) => c.name);
+  if (countries.length) rows.push(["Country", countries.join(", ")]);
+  if (m.budget) rows.push(["Budget", money(m.budget)]);
+  if (m.revenue) rows.push(["Box office", money(m.revenue)]);
+  const studios = (m.production_companies || []).slice(0, 3).map((c) => c.name);
+  if (studios.length) rows.push(["Studio", studios.join(", ")]);
+
+  const extra = $("infoExtra");
+  extra.textContent = "";
+  for (const [label, value] of rows) {
+    const row = document.createElement("div");
+    row.className = "extra-row";
+    const k = document.createElement("span");
+    k.className = "extra-k";
+    k.textContent = label;
+    const v = document.createElement("span");
+    v.textContent = value;
+    row.append(k, v);
+    extra.appendChild(row);
+  }
 
   const vids = m.videos?.results || [];
   const trailer =
@@ -523,7 +594,7 @@ function openInfo() {
   openModal("modalInfo");
 }
 
-$("btnDetails").addEventListener("click", openInfo);
+$("btnInfo").addEventListener("click", openInfo);
 
 // ---------- Trailer player ----------
 

@@ -58,6 +58,9 @@
         <div id="swipeArea">
           <div class="poster-wrap">
             <img id="poster" alt="Movie poster" draggable="false">
+            <button id="btnInfo" class="heart info-left" title="More info">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><rect x="11" y="10.5" width="2" height="6.5" rx="1" fill="currentColor" stroke="none"/><circle cx="12" cy="7.5" r="1.4" fill="currentColor" stroke="none"/></svg>
+            </button>
             <button id="btnFav" class="heart" title="Favorite">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
             </button>
@@ -70,7 +73,6 @@
           <p id="movieMeta"></p>
           <p id="movieGenres"></p>
         </div>
-        <button id="btnDetails" class="link-btn">More info</button>
         <div id="actions" class="actions">
           <button id="btnSkip" title="Not tonight — won't come up again">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4l10 8-10 8V4z" fill="currentColor"/><rect x="17" y="4" width="2.5" height="16" rx="1" fill="currentColor"/></svg>
@@ -129,31 +131,35 @@
   </div>
 
   <!-- More info -->
-  <div id="modalInfo" class="modal" hidden>
-    <div class="modal-head">
-      <h1 id="infoTitle"></h1>
-      <button class="icon-btn modal-close" data-close="modalInfo" title="Close">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="5" y1="5" x2="19" y2="19" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="19" y1="5" x2="5" y2="19" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-      </button>
-    </div>
-    <div class="modal-body">
-      <div class="info-top">
-        <img id="infoPoster" alt="">
-        <div>
-          <p id="infoMeta" class="hint"></p>
-          <p id="infoGenres" class="hint"></p>
-          <button id="btnTrailer" class="trailer-btn" hidden>
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5l11 7-11 7V5z" fill="currentColor"/></svg>
-            Watch trailer
-          </button>
-          <a id="lnkCSM" class="csm-btn" target="_blank" rel="noopener">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6M20 4L10 14M9 5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            Common Sense Media
-          </a>
-        </div>
+  <div id="modalInfo" class="modal sheet-modal" hidden>
+    <div class="sheet">
+      <div class="modal-head">
+        <h1 id="infoTitle"></h1>
+        <button class="icon-btn modal-close" data-close="modalInfo" title="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="5" y1="5" x2="19" y2="19" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="19" y1="5" x2="5" y2="19" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
       </div>
-      <p id="infoOverview"></p>
-      <p id="infoCast" class="hint"></p>
+      <div class="modal-body">
+        <div class="info-top">
+          <img id="infoPoster" alt="">
+          <div>
+            <p id="infoMeta" class="hint"></p>
+            <p id="infoGenres" class="hint"></p>
+            <button id="btnTrailer" class="trailer-btn" hidden>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5l11 7-11 7V5z" fill="currentColor"/></svg>
+              Watch trailer
+            </button>
+            <a id="lnkCSM" class="csm-btn" target="_blank" rel="noopener">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6M20 4L10 14M9 5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              Common Sense Media
+            </a>
+          </div>
+        </div>
+        <p id="infoOverview"></p>
+        <p id="infoDirector" class="hint"></p>
+        <p id="infoCast" class="hint"></p>
+        <div id="infoExtra" class="info-extra"></div>
+      </div>
     </div>
   </div>
 
