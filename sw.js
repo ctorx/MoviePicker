@@ -1,6 +1,6 @@
 "use strict";
 
-const CACHE = "movie-night-v1";
+const CACHE = "movie-night-v2";
 const SHELL = [
   "./",
   "./index.html",
@@ -12,7 +12,11 @@ const SHELL = [
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)));
-  self.skipWaiting();
+});
+
+// New versions wait until the app's "Update now" button tells them to take over.
+self.addEventListener("message", (e) => {
+  if (e.data && e.data.type === "SKIP_WAITING") self.skipWaiting();
 });
 
 self.addEventListener("activate", (e) => {

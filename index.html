@@ -15,7 +15,14 @@
   <main>
     <header>
       <span class="brand">🎬 Movie Night</span>
-      <button id="btnSettings" class="icon-btn" title="Settings" hidden>⚙️</button>
+      <div class="header-actions">
+        <button id="btnSearch" class="icon-btn" title="Search" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><line x1="16.5" y1="16.5" x2="21" y2="21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+        <button id="btnMenu" class="icon-btn" title="Menu" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="2" fill="currentColor"/><circle cx="12" cy="12" r="2" fill="currentColor"/><circle cx="12" cy="19" r="2" fill="currentColor"/></svg>
+        </button>
+      </div>
     </header>
 
     <!-- First run: TMDB API key -->
@@ -34,33 +41,7 @@
       <p class="hint">The key is stored only on this device.</p>
     </section>
 
-    <!-- Questions -->
-    <section id="screen-questions" hidden>
-      <h1>Who's watching?</h1>
-      <label for="inpAge">How old is the <strong>youngest</strong> person watching?</label>
-      <input id="inpAge" type="number" min="1" max="120" inputmode="numeric" placeholder="e.g. 12">
-      <p class="hint" id="certHint"></p>
-
-      <label for="inpYear"><strong>Oldest year</strong> to draw from</label>
-      <input id="inpYear" type="number" min="1930" inputmode="numeric" placeholder="e.g. 2010">
-      <p class="hint">Movies from this year and newer are fair game.</p>
-
-      <p id="questionsError" class="error" hidden></p>
-      <button id="btnStart" class="primary">Pick a movie</button>
-
-      <div class="lists-box">
-        <h2>Your lists</h2>
-        <p id="listCounts"></p>
-        <div class="row">
-          <button id="btnClearSkipped" class="small">Clear skipped</button>
-          <button id="btnClearSeen" class="small">Clear seen</button>
-          <button id="btnClearNever" class="small">Clear never</button>
-        </div>
-        <button id="btnChangeKey" class="link-btn">Change API key</button>
-      </div>
-    </section>
-
-    <!-- Pick -->
+    <!-- Main: the movie -->
     <section id="screen-pick" hidden>
       <div id="loading" hidden>
         <div class="spinner"></div>
@@ -70,28 +51,168 @@
       <div id="pickError" class="center" hidden>
         <p id="pickErrorMsg" class="error"></p>
         <button id="btnRetry" class="primary">Try again</button>
-        <button id="btnBackToQuestions" class="link-btn">Change settings</button>
+        <button id="btnErrorSearch" class="link-btn">Change search</button>
       </div>
 
       <div id="card" hidden>
-        <img id="poster" alt="Movie poster">
-        <h2 id="movieTitle"></h2>
-        <p id="movieMeta"></p>
-        <button id="btnDetails" class="link-btn">More info ▾</button>
-        <div id="details" hidden>
-          <p id="movieOverview"></p>
-          <p id="movieCast"></p>
-          <p id="movieExtra"></p>
+        <div id="swipeArea">
+          <div class="poster-wrap">
+            <img id="poster" alt="Movie poster" draggable="false">
+            <button id="btnFav" class="heart" title="Favorite">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+            </button>
+            <div class="swipe-badge badge-skip" id="badgeSkip">SKIP</div>
+            <div class="swipe-badge badge-fav" id="badgeFav">❤</div>
+          </div>
+          <h2 id="movieTitle"></h2>
+          <p id="movieMeta"></p>
+          <p id="movieGenres"></p>
         </div>
-      </div>
-
-      <div id="actions" class="actions" hidden>
-        <button id="btnSkip" title="Not tonight — won't come up again unless you clear skips">⏭️ Skip</button>
-        <button id="btnSeen" title="Already watched it">👀 Seen it</button>
-        <button id="btnNever" title="Never show this movie again">🚫 Never</button>
+        <button id="btnDetails" class="link-btn">More info</button>
+        <div id="actions" class="actions">
+          <button id="btnSkip" title="Not tonight — won't come up again">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4l10 8-10 8V4z" fill="currentColor"/><rect x="17" y="4" width="2.5" height="16" rx="1" fill="currentColor"/></svg>
+            <span>Skip</span>
+          </button>
+          <button id="btnSeen" title="Already watched it">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5C6.5 5 2.6 9.4 1.5 12c1.1 2.6 5 7 10.5 7s9.4-4.4 10.5-7C21.4 9.4 17.5 5 12 5z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>
+            <span>Seen it</span>
+          </button>
+          <button id="btnBlock" title="Never show this movie again">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><line x1="5.6" y1="5.6" x2="18.4" y2="18.4" stroke="currentColor" stroke-width="2"/></svg>
+            <span>Block</span>
+          </button>
+        </div>
       </div>
     </section>
   </main>
+
+  <!-- Search -->
+  <div id="modalSearch" class="modal" hidden>
+    <div class="modal-head">
+      <h1>Search</h1>
+      <button class="icon-btn modal-close" data-close="modalSearch" title="Close">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="5" y1="5" x2="19" y2="19" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="19" y1="5" x2="5" y2="19" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <label for="inpAge">How old is the <strong>youngest</strong> person watching?</label>
+      <input id="inpAge" type="number" min="1" max="120" inputmode="numeric" placeholder="e.g. 12">
+      <p class="hint" id="certHint"></p>
+
+      <label for="inpYear"><strong>Oldest year</strong> to draw from</label>
+      <input id="inpYear" type="number" min="1930" inputmode="numeric" placeholder="e.g. 2010">
+      <p class="hint">Movies from this year and newer are fair game.</p>
+
+      <label class="toggle-row">
+        <input type="checkbox" id="chkAdvanced">
+        <span>Advanced search</span>
+      </label>
+
+      <div id="advancedBox" hidden>
+        <label>Genres</label>
+        <div id="genreChips" class="chips"><p class="hint">Loading genres…</p></div>
+
+        <label for="inpActors">Actors / actresses</label>
+        <input id="inpActors" type="text" autocomplete="off" placeholder="e.g. Tom Hanks, Meg Ryan">
+        <p class="hint">Separate names with commas. Movies must feature all of them.</p>
+
+        <label for="selRuntime">Max length</label>
+        <select id="selRuntime"></select>
+      </div>
+
+      <p id="searchError" class="error" hidden></p>
+      <button id="btnApplySearch" class="primary">Find movies</button>
+    </div>
+  </div>
+
+  <!-- More info -->
+  <div id="modalInfo" class="modal" hidden>
+    <div class="modal-head">
+      <h1 id="infoTitle"></h1>
+      <button class="icon-btn modal-close" data-close="modalInfo" title="Close">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="5" y1="5" x2="19" y2="19" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="19" y1="5" x2="5" y2="19" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="info-top">
+        <img id="infoPoster" alt="">
+        <div>
+          <p id="infoMeta" class="hint"></p>
+          <p id="infoGenres" class="hint"></p>
+          <a id="lnkTrailer" class="trailer-btn" target="_blank" rel="noopener" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5l11 7-11 7V5z" fill="currentColor"/></svg>
+            Watch trailer
+          </a>
+        </div>
+      </div>
+      <p id="infoOverview"></p>
+      <p id="infoCast" class="hint"></p>
+    </div>
+  </div>
+
+  <!-- Saved lists -->
+  <div id="modalList" class="modal" hidden>
+    <div class="modal-head">
+      <h1 id="listTitle"></h1>
+      <button class="icon-btn modal-close" data-close="modalList" title="Close">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="5" y1="5" x2="19" y2="19" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="19" y1="5" x2="5" y2="19" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <p class="hint">Tap a movie to open it · swipe left to remove</p>
+      <ul id="listItems" class="movie-list"></ul>
+      <p id="listEmpty" class="hint center" hidden>Nothing here yet.</p>
+    </div>
+  </div>
+
+  <!-- Settings -->
+  <div id="modalSettings" class="modal" hidden>
+    <div class="modal-head">
+      <h1>Settings</h1>
+      <button class="icon-btn modal-close" data-close="modalSettings" title="Close">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="5" y1="5" x2="19" y2="19" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="19" y1="5" x2="5" y2="19" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <h2>TMDB API key</h2>
+      <input id="inpKeySettings" type="text" autocomplete="off" spellcheck="false" placeholder="Paste key here">
+      <p id="keyStatus" class="hint" hidden></p>
+      <button id="btnSaveKeySettings" class="small">Save key</button>
+
+      <h2>Your data</h2>
+      <p class="hint">Backs up your API key, search defaults, and all lists.</p>
+      <div class="row">
+        <button id="btnExport" class="small">Export (JSON)</button>
+        <button id="btnImport" class="small">Import (JSON)</button>
+      </div>
+
+      <h2>App updates</h2>
+      <button id="btnCheckUpdate" class="small">Check for updates</button>
+      <button id="btnApplyUpdate" class="small update-now" hidden>Update now</button>
+      <p id="updateStatus" class="hint" hidden></p>
+
+      <p class="hint version-line">Movie Night <span id="versionText"></span></p>
+    </div>
+  </div>
+
+  <!-- Drawer -->
+  <div id="drawerOverlay" class="overlay"></div>
+  <nav id="drawer" class="drawer">
+    <button class="drawer-item" data-list="favorites">❤️ Favorites <span class="count" id="cntFavorites"></span></button>
+    <button class="drawer-item" data-list="skipped">⏭️ Skipped <span class="count" id="cntSkipped"></span></button>
+    <button class="drawer-item" data-list="seen">👀 Seen <span class="count" id="cntSeen"></span></button>
+    <button class="drawer-item" data-list="blocked">🚫 Blocked <span class="count" id="cntBlocked"></span></button>
+    <hr>
+    <button class="drawer-item" id="drawerSettings">⚙️ Settings</button>
+  </nav>
+
+  <div id="toast" class="toast" hidden>
+    <span id="toastMsg"></span>
+    <button id="btnUndo" hidden>Undo</button>
+  </div>
+
+  <input type="file" id="fileImport" accept="application/json,.json" hidden>
 
   <script src="app.js"></script>
 </body>

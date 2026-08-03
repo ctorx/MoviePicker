@@ -1,5 +1,7 @@
 "use strict";
 
+const APP_VERSION = "2.0.0";
+
 // ---------- State (localStorage) ----------
 
 const store = {
@@ -16,17 +18,39 @@ const store = {
   },
 };
 
+// Only the API key, age, and year survive restarts. Advanced filters are per-session.
 let settings = store.load("mp_settings", { apiKey: "", age: null, fromYear: null });
-// Each list maps movieId -> { title, year }
-let lists = store.load("mp_lists", { seen: {}, skipped: {}, never: {} });
+let lists = store.load("mp_lists", {});
+normalizeLists();
+
+function normalizeLists() {
+  // v1 called the blocked list "never".
+  if (lists.never) {
+    lists.blocked = { ...lists.never, ...(lists.blocked || {}) };
+    delete lists.never;
+  }
+  for (const name of ["favorites", "skipped", "seen", "blocked"]) {
+    if (!lists[name] || typeof lists[name] !== "object") lists[name] = {};
+  }
+}
 
 function saveSettings() { store.save("mp_settings", settings); }
 function saveLists() { store.save("mp_lists", lists); }
+
+// Session-only search filters (advanced is off by default on every start).
+const search = {
+  advanced: false,
+  genres: new Set(),
+  actors: "",
+  actorIds: [],
+  maxRuntime: 120,
+};
 
 // ---------- TMDB API ----------
 
 const TMDB = "https://api.themoviedb.org/3";
 const IMG = "https://image.tmdb.org/t/p/w500";
+const IMG_SMALL = "https://image.tmdb.org/t/p/w154";
 
 function tmdbFetch(path, params = {}) {
   const url = new URL(TMDB + path);
@@ -47,6 +71,8 @@ function tmdbFetch(path, params = {}) {
 }
 
 // US certifications allowed for the youngest viewer's age.
+const CERT_RANK = { G: 0, PG: 1, "PG-13": 2, R: 3, "NC-17": 4 };
+
 function certForAge(age) {
   if (age < 8) return "G";
   if (age < 13) return "PG";
@@ -54,8 +80,23 @@ function certForAge(age) {
   return "R";
 }
 
+function certOf(m) {
+  const us = (m.release_dates?.results || []).find((r) => r.iso_3166_1 === "US");
+  const withCert = (us?.release_dates || []).find((d) => d.certification);
+  return withCert ? withCert.certification : "";
+}
+
+// TMDB's certification.lte filter leaks unrated and miscertified titles, so
+// every pick is re-checked against the movie's real US certification below.
+function certAllowed(m) {
+  if (settings.age >= 17) return true;
+  const cert = certOf(m);
+  const max = CERT_RANK[certForAge(settings.age)];
+  return cert in CERT_RANK && CERT_RANK[cert] <= max;
+}
+
 function discoverParams(page) {
-  return {
+  const p = {
     certification_country: "US",
     "certification.lte": certForAge(settings.age),
     "primary_release_date.gte": settings.fromYear + "-01-01",
@@ -65,26 +106,62 @@ function discoverParams(page) {
     "vote_average.gte": "6",   // quality floor so picks are watchable
     page: String(page),
   };
+  if (search.advanced) {
+    if (search.genres.size) p.with_genres = [...search.genres].join(",");
+    if (search.actorIds.length) {
+      p.with_cast = search.actorIds.join(",");
+      // Actor filmographies are small; the popularity floors would empty them out.
+      p["vote_count.gte"] = "20";
+      delete p["vote_average.gte"];
+    }
+    if (search.maxRuntime) p["with_runtime.lte"] = String(search.maxRuntime);
+  }
+  return p;
+}
+
+let genreCache = null;
+async function ensureGenres() {
+  if (!genreCache) genreCache = (await tmdbFetch("/genre/movie/list")).genres || [];
+  return genreCache;
 }
 
 // ---------- Picking ----------
 
 function excludedIds() {
-  return new Set([
-    ...Object.keys(lists.seen),
-    ...Object.keys(lists.skipped),
-    ...Object.keys(lists.never),
-  ].map(Number));
+  return new Set(
+    [
+      ...Object.keys(lists.favorites),
+      ...Object.keys(lists.skipped),
+      ...Object.keys(lists.seen),
+      ...Object.keys(lists.blocked),
+    ].map(Number)
+  );
 }
 
+function shuffle(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+let pickToken = 0; // ignore stale responses when the user re-searches mid-load
+
 async function pickMovie() {
-  showPickState("loading");
+  const token = ++pickToken;
+  if (!$("card").hidden) {
+    $("card").classList.add("loading");
+  } else {
+    showPickState("loading");
+  }
   try {
     const excluded = excludedIds();
     const first = await tmdbFetch("/discover/movie", discoverParams(1));
+    if (token !== pickToken) return;
 
     if (first.total_results === 0) {
-      showPickError("No movies match. Try an earlier year or a different age.");
+      showPickError("No movies match. Try an earlier year, a different age, or fewer filters.");
       return;
     }
 
@@ -100,18 +177,43 @@ async function pickMovie() {
       tried.add(page);
 
       const data = page === 1 ? first : await tmdbFetch("/discover/movie", discoverParams(page));
-      const candidates = data.results.filter((m) => !excluded.has(m.id) && m.poster_path);
-      if (candidates.length === 0) continue;
+      if (token !== pickToken) return;
+      const candidates = shuffle(
+        data.results.filter((m) => !excluded.has(m.id) && m.poster_path)
+      );
 
-      const movie = candidates[Math.floor(Math.random() * candidates.length)];
-      const details = await tmdbFetch("/movie/" + movie.id, { append_to_response: "credits" });
-      renderMovie(details);
-      return;
+      // Verify the real certification before accepting a candidate (see certAllowed).
+      for (const movie of candidates.slice(0, 5)) {
+        const details = await tmdbFetch("/movie/" + movie.id, {
+          append_to_response: "credits,videos,release_dates",
+        });
+        if (token !== pickToken) return;
+        if (!certAllowed(details)) continue;
+        renderMovie(details);
+        return;
+      }
     }
 
-    showPickError("Looks like you've been through everything that matches! Clear your skipped list in Settings, or widen the year range.");
+    showPickError("Looks like you've been through everything that matches! Widen the search, or clear your skipped list from the menu.");
   } catch (err) {
+    if (token !== pickToken) return;
     showPickError(err.message || "Something went wrong. Check your connection.");
+  }
+}
+
+async function openMovieById(id) {
+  const token = ++pickToken; // cancel any in-flight pick
+  showPickState("loading");
+  closeAllModals();
+  try {
+    const details = await tmdbFetch("/movie/" + id, {
+      append_to_response: "credits,videos,release_dates",
+    });
+    if (token !== pickToken) return;
+    renderMovie(details);
+  } catch (err) {
+    if (token !== pickToken) return;
+    showPickError(err.message || "Couldn't load that movie.");
   }
 }
 
@@ -122,17 +224,17 @@ const $ = (id) => document.getElementById(id);
 let current = null; // the movie on screen
 
 function show(screen) {
-  for (const s of ["screen-setup", "screen-questions", "screen-pick"]) {
-    $(s).hidden = s !== screen;
-  }
-  $("btnSettings").hidden = screen !== "screen-pick";
+  for (const s of ["screen-setup", "screen-pick"]) $(s).hidden = s !== screen;
+  const onSetup = screen === "screen-setup";
+  $("btnSearch").hidden = onSetup;
+  $("btnMenu").hidden = onSetup;
 }
 
 function showPickState(state) {
   $("loading").hidden = state !== "loading";
   $("pickError").hidden = state !== "error";
   $("card").hidden = state !== "movie";
-  $("actions").hidden = state !== "movie";
+  $("card").classList.remove("loading");
 }
 
 function showPickError(msg) {
@@ -146,45 +248,121 @@ function runtimeText(mins) {
   return h ? `${h}h ${m}m` : `${m}m`;
 }
 
+function metaParts(m) {
+  const year = (m.release_date || "").slice(0, 4);
+  const parts = [];
+  if (year) parts.push(year);
+  const rt = runtimeText(m.runtime);
+  if (rt) parts.push(rt);
+  if (m.vote_average) parts.push("★ " + m.vote_average.toFixed(1));
+  return parts;
+}
+
+function fillMeta(el, m) {
+  el.textContent = "";
+  const cert = certOf(m);
+  if (cert) {
+    const b = document.createElement("span");
+    b.className = "cert";
+    b.textContent = cert;
+    el.appendChild(b);
+  }
+  el.appendChild(document.createTextNode(metaParts(m).join(" · ")));
+}
+
 function renderMovie(m) {
   current = m;
-  const year = (m.release_date || "").slice(0, 4);
 
   $("poster").src = m.poster_path ? IMG + m.poster_path : "";
   $("poster").alt = m.title + " poster";
   $("movieTitle").textContent = m.title;
-  $("movieMeta").textContent = [year, runtimeText(m.runtime)].filter(Boolean).join(" · ");
+  fillMeta($("movieMeta"), m);
+  $("movieGenres").textContent = (m.genres || []).map((g) => g.name).join(" · ");
+  refreshHeart();
 
-  $("movieOverview").textContent = m.overview || "No description available.";
-  const cast = (m.credits?.cast || []).slice(0, 8).map((c) => c.name).join(", ");
-  $("movieCast").textContent = cast ? "Starring: " + cast : "";
-  const bits = [];
-  if (m.genres?.length) bits.push(m.genres.map((g) => g.name).join(", "));
-  if (m.vote_average) bits.push("TMDB score: " + m.vote_average.toFixed(1) + "/10");
-  $("movieExtra").textContent = bits.join(" · ");
-
-  $("details").hidden = true;
-  $("btnDetails").textContent = "More info ▾";
   showPickState("movie");
+  resetSwipe();
   window.scrollTo(0, 0);
+}
+
+function refreshHeart() {
+  $("btnFav").classList.toggle("active", !!(current && lists.favorites[current.id]));
+}
+
+function listEntry(m) {
+  return {
+    title: m.title,
+    year: (m.release_date || "").slice(0, 4),
+    poster: m.poster_path || null,
+  };
 }
 
 function markCurrent(listName) {
   if (!current) return;
-  lists[listName][current.id] = {
-    title: current.title,
-    year: (current.release_date || "").slice(0, 4),
-  };
+  lists[listName][current.id] = listEntry(current);
   saveLists();
+  refreshCounts();
   current = null;
   pickMovie();
 }
 
-function refreshListCounts() {
-  const n = (o) => Object.keys(o).length;
-  $("listCounts").textContent =
-    `Seen: ${n(lists.seen)} · Skipped: ${n(lists.skipped)} · Never: ${n(lists.never)}`;
+function toggleFavorite() {
+  if (!current) return;
+  if (lists.favorites[current.id]) {
+    delete lists.favorites[current.id];
+  } else {
+    lists.favorites[current.id] = listEntry(current);
+  }
+  saveLists();
+  refreshCounts();
+  refreshHeart();
 }
+
+function refreshCounts() {
+  const n = (o) => Object.keys(o).length;
+  $("cntFavorites").textContent = n(lists.favorites) || "";
+  $("cntSkipped").textContent = n(lists.skipped) || "";
+  $("cntSeen").textContent = n(lists.seen) || "";
+  $("cntBlocked").textContent = n(lists.blocked) || "";
+}
+
+// ---------- Modals & drawer ----------
+
+const MODALS = ["modalSearch", "modalInfo", "modalList", "modalSettings"];
+
+function openModal(id) {
+  $(id).hidden = false;
+  $(id).scrollTop = 0;
+  document.body.classList.add("no-scroll");
+}
+
+function closeModal(id) {
+  $(id).hidden = true;
+  if (MODALS.every((m) => $(m).hidden)) document.body.classList.remove("no-scroll");
+}
+
+function closeAllModals() {
+  MODALS.forEach((m) => ($(m).hidden = true));
+  document.body.classList.remove("no-scroll");
+  closeDrawer();
+}
+
+document.querySelectorAll(".modal-close").forEach((btn) => {
+  btn.addEventListener("click", () => closeModal(btn.dataset.close));
+});
+
+function openDrawer() {
+  refreshCounts();
+  document.body.classList.add("drawer-open");
+}
+function closeDrawer() {
+  document.body.classList.remove("drawer-open");
+}
+
+$("btnMenu").addEventListener("click", openDrawer);
+$("drawerOverlay").addEventListener("click", closeDrawer);
+
+// ---------- Search ----------
 
 function updateCertHint() {
   const age = parseInt($("inpAge").value, 10);
@@ -193,16 +371,528 @@ function updateCertHint() {
     : "Sets the maximum movie rating (G, PG, PG-13, R).";
 }
 
-// ---------- Wiring ----------
+function buildRuntimeOptions() {
+  const sel = $("selRuntime");
+  sel.innerHTML = "";
+  const any = document.createElement("option");
+  any.value = "";
+  any.textContent = "No limit";
+  sel.appendChild(any);
+  for (let mins = 60; mins <= 240; mins += 15) {
+    const o = document.createElement("option");
+    o.value = String(mins);
+    o.textContent = runtimeText(mins);
+    sel.appendChild(o);
+  }
+  sel.value = search.maxRuntime ? String(search.maxRuntime) : "";
+}
 
-function initQuestionsScreen() {
+async function renderGenreChips() {
+  const box = $("genreChips");
+  try {
+    const genres = await ensureGenres();
+    box.innerHTML = "";
+    for (const g of genres) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "chip";
+      chip.textContent = g.name;
+      chip.classList.toggle("active", search.genres.has(g.id));
+      chip.addEventListener("click", () => {
+        if (search.genres.has(g.id)) search.genres.delete(g.id);
+        else search.genres.add(g.id);
+        chip.classList.toggle("active");
+      });
+      box.appendChild(chip);
+    }
+  } catch {
+    box.innerHTML = '<p class="hint">Couldn\'t load genres. Check your connection.</p>';
+  }
+}
+
+function openSearch() {
   if (settings.age) $("inpAge").value = settings.age;
   if (settings.fromYear) $("inpYear").value = settings.fromYear;
+  $("chkAdvanced").checked = search.advanced;
+  $("advancedBox").hidden = !search.advanced;
+  $("inpActors").value = search.actors;
+  buildRuntimeOptions();
+  if (search.advanced) renderGenreChips();
   updateCertHint();
-  refreshListCounts();
-  $("questionsError").hidden = true;
-  show("screen-questions");
+  $("searchError").hidden = true;
+  closeDrawer();
+  openModal("modalSearch");
 }
+
+$("btnSearch").addEventListener("click", openSearch);
+$("btnErrorSearch").addEventListener("click", openSearch);
+$("inpAge").addEventListener("input", updateCertHint);
+
+$("chkAdvanced").addEventListener("change", () => {
+  $("advancedBox").hidden = !$("chkAdvanced").checked;
+  if ($("chkAdvanced").checked) renderGenreChips();
+});
+
+async function resolveActors(namesText) {
+  const names = namesText.split(",").map((s) => s.trim()).filter(Boolean);
+  const ids = [];
+  const missing = [];
+  for (const name of names) {
+    const r = await tmdbFetch("/search/person", { query: name });
+    const hit = (r.results || [])[0];
+    if (hit) ids.push(hit.id);
+    else missing.push(name);
+  }
+  return { ids, missing };
+}
+
+$("btnApplySearch").addEventListener("click", async () => {
+  const errEl = $("searchError");
+  errEl.hidden = true;
+
+  const age = parseInt($("inpAge").value, 10);
+  const year = parseInt($("inpYear").value, 10);
+  const thisYear = new Date().getFullYear();
+
+  if (!Number.isFinite(age) || age < 1 || age > 120) {
+    errEl.textContent = "Enter the youngest viewer's age (1–120).";
+    errEl.hidden = false;
+    return;
+  }
+  if (!Number.isFinite(year) || year < 1930 || year > thisYear) {
+    errEl.textContent = `Enter a year between 1930 and ${thisYear}.`;
+    errEl.hidden = false;
+    return;
+  }
+
+  settings.age = age;
+  settings.fromYear = year;
+  saveSettings();
+
+  search.advanced = $("chkAdvanced").checked;
+  const btn = $("btnApplySearch");
+  btn.disabled = true;
+  try {
+    if (search.advanced) {
+      search.actors = $("inpActors").value;
+      search.maxRuntime = $("selRuntime").value ? parseInt($("selRuntime").value, 10) : 0;
+      const { ids, missing } = await resolveActors(search.actors);
+      if (missing.length) {
+        errEl.textContent = "Couldn't find: " + missing.join(", ");
+        errEl.hidden = false;
+        return;
+      }
+      search.actorIds = ids;
+    } else {
+      search.actorIds = [];
+    }
+    closeModal("modalSearch");
+    show("screen-pick");
+    pickMovie();
+  } catch (err) {
+    errEl.textContent = err.message || "Search failed. Check your connection.";
+    errEl.hidden = false;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// ---------- More info ----------
+
+function openInfo() {
+  if (!current) return;
+  const m = current;
+  $("infoTitle").textContent = m.title;
+  $("infoPoster").src = m.poster_path ? IMG_SMALL + m.poster_path : "";
+  $("infoPoster").alt = m.title + " poster";
+  fillMeta($("infoMeta"), m);
+  $("infoGenres").textContent = (m.genres || []).map((g) => g.name).join(" · ");
+  $("infoOverview").textContent = m.overview || "No description available.";
+  const cast = (m.credits?.cast || []).slice(0, 10).map((c) => c.name).join(", ");
+  $("infoCast").textContent = cast ? "Starring: " + cast : "";
+
+  const vids = m.videos?.results || [];
+  const trailer =
+    vids.find((v) => v.site === "YouTube" && v.type === "Trailer" && v.official) ||
+    vids.find((v) => v.site === "YouTube" && v.type === "Trailer") ||
+    vids.find((v) => v.site === "YouTube");
+  if (trailer) {
+    $("lnkTrailer").href = "https://www.youtube.com/watch?v=" + trailer.key;
+    $("lnkTrailer").hidden = false;
+  } else {
+    $("lnkTrailer").hidden = true;
+  }
+  openModal("modalInfo");
+}
+
+$("btnDetails").addEventListener("click", openInfo);
+
+// ---------- Card actions & swiping ----------
+
+$("btnSkip").addEventListener("click", () => markCurrent("skipped"));
+$("btnSeen").addEventListener("click", () => markCurrent("seen"));
+$("btnBlock").addEventListener("click", () => markCurrent("blocked"));
+$("btnFav").addEventListener("click", toggleFavorite);
+
+const swipeArea = $("swipeArea");
+let drag = null;
+
+function resetSwipe() {
+  swipeArea.style.transition = "";
+  swipeArea.style.transform = "";
+  $("badgeFav").style.opacity = 0;
+  $("badgeSkip").style.opacity = 0;
+}
+
+function swipeOut(dir, done) {
+  swipeArea.style.transition = "transform 0.25s ease-out";
+  swipeArea.style.transform = `translateX(${dir * 120}%) rotate(${dir * 12}deg)`;
+  setTimeout(() => {
+    resetSwipe();
+    done();
+  }, 250);
+}
+
+swipeArea.addEventListener("pointerdown", (e) => {
+  if (!current || $("card").classList.contains("loading")) return;
+  if (e.target.closest("button")) return;
+  drag = { x: e.clientX, y: e.clientY, id: e.pointerId, active: false };
+});
+
+swipeArea.addEventListener("pointermove", (e) => {
+  if (!drag) return;
+  const dx = e.clientX - drag.x;
+  const dy = e.clientY - drag.y;
+  if (!drag.active) {
+    if (Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy)) {
+      drag.active = true;
+      try { swipeArea.setPointerCapture(drag.id); } catch {}
+    } else if (Math.abs(dy) > 12) {
+      drag = null;
+    }
+    return;
+  }
+  swipeArea.style.transform = `translateX(${dx}px) rotate(${dx / 30}deg)`;
+  $("badgeFav").style.opacity = Math.min(1, Math.max(0, dx / 90));
+  $("badgeSkip").style.opacity = Math.min(1, Math.max(0, -dx / 90));
+});
+
+function endDrag(e) {
+  if (!drag) return;
+  const wasActive = drag.active;
+  const dx = e.clientX - drag.x;
+  drag = null;
+  if (!wasActive) return;
+  if (dx > 90) {
+    swipeOut(1, () => {
+      if (current && !lists.favorites[current.id]) {
+        lists.favorites[current.id] = listEntry(current);
+        saveLists();
+        refreshCounts();
+      }
+      current = null;
+      pickMovie();
+    });
+  } else if (dx < -90) {
+    swipeOut(-1, () => markCurrent("skipped"));
+  } else {
+    swipeArea.style.transition = "transform 0.2s ease-out";
+    swipeArea.style.transform = "";
+    $("badgeFav").style.opacity = 0;
+    $("badgeSkip").style.opacity = 0;
+    setTimeout(() => { swipeArea.style.transition = ""; }, 200);
+  }
+}
+
+swipeArea.addEventListener("pointerup", endDrag);
+swipeArea.addEventListener("pointercancel", endDrag);
+
+// ---------- Saved lists (drawer) ----------
+
+const LIST_LABELS = {
+  favorites: "Favorites",
+  skipped: "Skipped",
+  seen: "Seen",
+  blocked: "Blocked",
+};
+
+let openListName = null;
+
+document.querySelectorAll(".drawer-item[data-list]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    closeDrawer();
+    openList(btn.dataset.list);
+  });
+});
+
+$("drawerSettings").addEventListener("click", () => {
+  closeDrawer();
+  openSettings();
+});
+
+function openList(name) {
+  openListName = name;
+  $("listTitle").textContent = LIST_LABELS[name];
+  renderList();
+  openModal("modalList");
+}
+
+function renderList() {
+  const ul = $("listItems");
+  ul.innerHTML = "";
+  const entries = Object.entries(lists[openListName]);
+  $("listEmpty").hidden = entries.length > 0;
+  for (const [id, entry] of entries) {
+    ul.appendChild(buildRow(id, entry));
+  }
+}
+
+function buildRow(id, entry) {
+  const li = document.createElement("li");
+  li.className = "movie-row";
+
+  const inner = document.createElement("div");
+  inner.className = "row-inner";
+
+  const img = document.createElement("img");
+  img.src = entry.poster ? IMG_SMALL + entry.poster : "icons/icon.svg";
+  img.alt = "";
+  img.draggable = false;
+  const text = document.createElement("div");
+  const title = document.createElement("div");
+  title.className = "row-title";
+  title.textContent = entry.title;
+  const year = document.createElement("div");
+  year.className = "row-year";
+  year.textContent = entry.year || "";
+  text.append(title, year);
+  inner.append(img, text);
+  li.appendChild(inner);
+
+  // Tap opens the movie; a horizontal drag past the threshold removes it.
+  let rowDrag = null;
+  let swiped = false;
+
+  li.addEventListener("pointerdown", (e) => {
+    rowDrag = { x: e.clientX, y: e.clientY, id: e.pointerId, active: false };
+    swiped = false;
+  });
+  li.addEventListener("pointermove", (e) => {
+    if (!rowDrag) return;
+    const dx = e.clientX - rowDrag.x;
+    const dy = e.clientY - rowDrag.y;
+    if (!rowDrag.active) {
+      if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy)) {
+        rowDrag.active = true;
+        try { li.setPointerCapture(rowDrag.id); } catch {}
+      } else if (Math.abs(dy) > 10) {
+        rowDrag = null;
+      }
+      return;
+    }
+    inner.style.transform = `translateX(${Math.min(0, dx)}px)`;
+    li.classList.toggle("removing", dx < -70);
+  });
+  const endRowDrag = (e) => {
+    if (!rowDrag) return;
+    const wasActive = rowDrag.active;
+    const dx = e.clientX - rowDrag.x;
+    rowDrag = null;
+    if (!wasActive) return;
+    swiped = true;
+    if (dx < -70) {
+      inner.style.transition = "transform 0.2s ease-out";
+      inner.style.transform = "translateX(-110%)";
+      setTimeout(() => removeFromList(openListName, id, entry), 180);
+    } else {
+      inner.style.transition = "transform 0.2s ease-out";
+      inner.style.transform = "";
+      li.classList.remove("removing");
+      setTimeout(() => { inner.style.transition = ""; }, 200);
+    }
+  };
+  li.addEventListener("pointerup", endRowDrag);
+  li.addEventListener("pointercancel", endRowDrag);
+  li.addEventListener("click", () => {
+    if (swiped) return;
+    openMovieById(id);
+  });
+
+  return li;
+}
+
+function removeFromList(name, id, entry) {
+  delete lists[name][id];
+  saveLists();
+  refreshCounts();
+  renderList();
+  showToast(`Removed "${entry.title}"`, () => {
+    lists[name][id] = entry;
+    saveLists();
+    refreshCounts();
+    if (openListName === name && !$("modalList").hidden) renderList();
+  });
+}
+
+// ---------- Toast ----------
+
+let toastTimer = null;
+
+function showToast(msg, undoFn) {
+  const toast = $("toast");
+  $("toastMsg").textContent = msg;
+  $("btnUndo").hidden = !undoFn;
+  $("btnUndo").onclick = undoFn
+    ? () => { hideToast(); undoFn(); }
+    : null;
+  toast.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(hideToast, 5000);
+}
+
+function hideToast() {
+  clearTimeout(toastTimer);
+  $("toast").hidden = true;
+}
+
+// ---------- Settings ----------
+
+function openSettings() {
+  $("inpKeySettings").value = settings.apiKey;
+  $("keyStatus").hidden = true;
+  $("updateStatus").hidden = true;
+  $("btnApplyUpdate").hidden = true;
+  $("versionText").textContent = "v" + APP_VERSION;
+  openModal("modalSettings");
+}
+
+$("btnSaveKeySettings").addEventListener("click", async () => {
+  const status = $("keyStatus");
+  const key = $("inpKeySettings").value.trim();
+  if (!key) {
+    status.textContent = "Paste a key first.";
+    status.hidden = false;
+    return;
+  }
+  const prev = settings.apiKey;
+  settings.apiKey = key;
+  status.textContent = "Checking…";
+  status.hidden = false;
+  try {
+    await tmdbFetch("/configuration");
+    saveSettings();
+    status.textContent = "Key saved.";
+  } catch (err) {
+    settings.apiKey = prev;
+    status.textContent = err.message;
+  }
+});
+
+// Export / import
+
+$("btnExport").addEventListener("click", () => {
+  const data = {
+    app: "movie-night",
+    version: APP_VERSION,
+    exported: new Date().toISOString(),
+    settings,
+    lists,
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "movie-night-backup.json";
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+$("btnImport").addEventListener("click", () => $("fileImport").click());
+
+$("fileImport").addEventListener("change", async () => {
+  const file = $("fileImport").files[0];
+  $("fileImport").value = "";
+  if (!file) return;
+  try {
+    const data = JSON.parse(await file.text());
+    if (!data || typeof data !== "object" || !data.settings || !data.lists) {
+      throw new Error("bad shape");
+    }
+    settings = {
+      apiKey: String(data.settings.apiKey || ""),
+      age: data.settings.age || null,
+      fromYear: data.settings.fromYear || null,
+    };
+    lists = data.lists;
+    normalizeLists();
+    saveSettings();
+    saveLists();
+    showToast("Import complete — reloading…");
+    setTimeout(() => location.reload(), 900);
+  } catch {
+    showToast("That file isn't a Movie Night backup.");
+  }
+});
+
+// App updates (service worker)
+
+let reloadingForUpdate = false;
+
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("sw.js").catch(() => {});
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (reloadingForUpdate) location.reload();
+  });
+}
+
+$("btnCheckUpdate").addEventListener("click", async () => {
+  const status = $("updateStatus");
+  const applyBtn = $("btnApplyUpdate");
+  applyBtn.hidden = true;
+  status.textContent = "Checking…";
+  status.hidden = false;
+
+  if (!("serviceWorker" in navigator)) {
+    status.textContent = "Updates aren't supported in this browser.";
+    return;
+  }
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    if (!reg) {
+      status.textContent = "Offline support isn't active yet. Reload once and try again.";
+      return;
+    }
+    await reg.update();
+
+    // A fresh worker may still be installing; give it a moment.
+    if (reg.installing) {
+      await new Promise((resolve) => {
+        reg.installing.addEventListener("statechange", function onState() {
+          if (this.state === "installed" || this.state === "activated") {
+            this.removeEventListener("statechange", onState);
+            resolve();
+          }
+        });
+      });
+    }
+
+    if (reg.waiting) {
+      status.textContent = "Update available!";
+      applyBtn.hidden = false;
+      applyBtn.onclick = () => {
+        reloadingForUpdate = true;
+        reg.waiting.postMessage({ type: "SKIP_WAITING" });
+        status.textContent = "Updating…";
+        applyBtn.hidden = true;
+      };
+    } else {
+      status.textContent = "You're on the latest version (v" + APP_VERSION + ").";
+    }
+  } catch {
+    status.textContent = "Couldn't check for updates. Are you online?";
+  }
+});
+
+// ---------- First-run setup ----------
 
 $("btnSaveKey").addEventListener("click", async () => {
   const key = $("inpKey").value.trim();
@@ -218,7 +908,8 @@ $("btnSaveKey").addEventListener("click", async () => {
   try {
     await tmdbFetch("/configuration"); // validates the key
     saveSettings();
-    initQuestionsScreen();
+    show("screen-pick");
+    openSearch();
   } catch (err) {
     settings.apiKey = "";
     errEl.textContent = err.message;
@@ -228,73 +919,19 @@ $("btnSaveKey").addEventListener("click", async () => {
   }
 });
 
-$("inpAge").addEventListener("input", updateCertHint);
-
-$("btnStart").addEventListener("click", () => {
-  const age = parseInt($("inpAge").value, 10);
-  const year = parseInt($("inpYear").value, 10);
-  const thisYear = new Date().getFullYear();
-  const errEl = $("questionsError");
-
-  if (!Number.isFinite(age) || age < 1 || age > 120) {
-    errEl.textContent = "Enter the youngest viewer's age (1–120).";
-    errEl.hidden = false;
-    return;
-  }
-  if (!Number.isFinite(year) || year < 1930 || year > thisYear) {
-    errEl.textContent = `Enter a year between 1930 and ${thisYear}.`;
-    errEl.hidden = false;
-    return;
-  }
-  errEl.hidden = true;
-  settings.age = age;
-  settings.fromYear = year;
-  saveSettings();
-  show("screen-pick");
-  pickMovie();
-});
-
-$("btnSettings").addEventListener("click", initQuestionsScreen);
-$("btnBackToQuestions").addEventListener("click", initQuestionsScreen);
 $("btnRetry").addEventListener("click", pickMovie);
-
-$("btnDetails").addEventListener("click", () => {
-  const d = $("details");
-  d.hidden = !d.hidden;
-  $("btnDetails").textContent = d.hidden ? "More info ▾" : "Less info ▴";
-});
-
-$("btnSkip").addEventListener("click", () => markCurrent("skipped"));
-$("btnSeen").addEventListener("click", () => markCurrent("seen"));
-$("btnNever").addEventListener("click", () => markCurrent("never"));
-
-function clearList(name, label) {
-  if (!confirm(`Clear your "${label}" list?`)) return;
-  lists[name] = {};
-  saveLists();
-  refreshListCounts();
-}
-$("btnClearSkipped").addEventListener("click", () => clearList("skipped", "skipped"));
-$("btnClearSeen").addEventListener("click", () => clearList("seen", "seen it"));
-$("btnClearNever").addEventListener("click", () => clearList("never", "never"));
-
-$("btnChangeKey").addEventListener("click", () => {
-  $("inpKey").value = settings.apiKey;
-  $("setupError").hidden = true;
-  show("screen-setup");
-});
 
 // ---------- Boot ----------
 
+refreshCounts();
+
 if (!settings.apiKey) {
   show("screen-setup");
-} else if (!settings.age || !settings.fromYear) {
-  initQuestionsScreen();
 } else {
   show("screen-pick");
-  pickMovie();
-}
-
-if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("sw.js").catch(() => {});
+  if (settings.age && settings.fromYear) {
+    pickMovie();
+  } else {
+    openSearch();
+  }
 }
