@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <title>Movie Night</title>
   <meta name="description" content="Help a group pick a movie to watch.">
   <meta name="theme-color" content="#14181c">
@@ -66,9 +66,11 @@
             <div class="swipe-badge badge-seen" id="badgeSeen">SEEN</div>
             <div class="swipe-badge badge-block" id="badgeBlock">BLOCK</div>
           </div>
-          <h2 id="movieTitle"></h2>
-          <p id="movieMeta"></p>
-          <p id="movieGenres"></p>
+          <div id="movieInfo" class="movie-info">
+            <h2 id="movieTitle"></h2>
+            <p id="movieMeta"></p>
+            <p id="movieGenres"></p>
+          </div>
         </div>
         <div id="actions" class="actions">
           <button id="btnSkip" title="Not tonight — won't come up again">

@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.3.0";
+const APP_VERSION = "2.4.0";
 
 // ---------- State (localStorage) ----------
 
@@ -303,8 +303,28 @@ function renderMovie(m) {
 
   showPickState("movie");
   resetSwipe();
-  window.scrollTo(0, 0);
+  applyInfoLayout();
 }
+
+// Long titles/genre lists would otherwise squeeze the poster below its
+// minimum; when the layout overflows, pin the info panel onto the cover.
+function applyInfoLayout() {
+  const card = $("card");
+  const info = $("movieInfo");
+  card.classList.remove("info-overlay");
+  const area = $("swipeArea");
+  if (info.parentElement !== area) area.appendChild(info);
+  requestAnimationFrame(() => {
+    if (document.body.scrollHeight > window.innerHeight + 2) {
+      card.classList.add("info-overlay");
+      document.querySelector(".poster-wrap").appendChild(info);
+    }
+  });
+}
+
+window.addEventListener("resize", () => {
+  if (current && !$("card").hidden) applyInfoLayout();
+});
 
 function refreshHeart() {
   $("btnFav").classList.toggle("active", !!(current && lists.favorites[current.id]));
