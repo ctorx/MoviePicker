@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.5.0";
+const APP_VERSION = "2.6.0";
 
 // ---------- State (localStorage) ----------
 
@@ -698,9 +698,6 @@ document.addEventListener("fullscreenchange", () => {
 
 // ---------- Card actions & swiping ----------
 
-$("btnSkip").addEventListener("click", () => markCurrent("skipped"));
-$("btnSeen").addEventListener("click", () => markCurrent("seen"));
-$("btnBlock").addEventListener("click", () => markCurrent("blocked"));
 $("btnFav").addEventListener("click", toggleFavorite);
 
 // Right = favorite, left = block, up = skip, down = seen.

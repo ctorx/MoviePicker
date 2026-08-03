@@ -250,32 +250,8 @@ button:active { transform: scale(0.98); }
   font-weight: 700;
 }
 
-.actions {
-  display: flex;
-  gap: 10px;
-  margin-top: 14px;
-  flex-shrink: 0;
-}
-.actions button {
-  flex: 1;
-  padding: 12px 6px;
-  font-weight: 600;
-  background: var(--card);
-  border: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-}
-.actions svg { width: 17px; height: 17px; flex-shrink: 0; }
-#btnBlock { color: var(--danger); }
-
 /* Shimmer while the next movie loads: card keeps its size, content dims. */
 #card.loading #swipeArea { pointer-events: none; }
-#card.loading .actions button {
-  pointer-events: none;
-  opacity: 0.5;
-}
 #card.loading #poster { filter: brightness(0.45) saturate(0.3); }
 #card.loading .heart { visibility: hidden; }
 #card.loading .poster-wrap::after {
