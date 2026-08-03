@@ -326,12 +326,15 @@ button:active { transform: scale(0.98); }
    floating Back button. */
 .info-body { padding-bottom: 120px; }
 
+/* Sticky (not fixed) so it lives in the modal's scroll flow — a fixed
+   button can survive as a stale paint layer after the modal is hidden. */
 .back-btn {
-  position: fixed;
+  position: sticky;
   bottom: 18px;
-  left: 50%;
-  transform: translateX(-50%);
   z-index: 2;
+  display: block;
+  margin: 0 auto;
+  width: fit-content;
   padding: 13px 48px;
   border-radius: 999px;
   background: var(--card);
