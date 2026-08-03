@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.4.0";
+const APP_VERSION = "2.4.1";
 
 // ---------- State (localStorage) ----------
 
@@ -306,8 +306,9 @@ function renderMovie(m) {
   applyInfoLayout();
 }
 
-// Long titles/genre lists would otherwise squeeze the poster below its
-// minimum; when the layout overflows, pin the info panel onto the cover.
+// Flexbox guarantees cover, info, and buttons all fit — the poster is the
+// only piece that shrinks. If a long info block squeezes it too far, move
+// the info into the translucent panel on the cover so the poster can grow.
 function applyInfoLayout() {
   const card = $("card");
   const info = $("movieInfo");
@@ -315,9 +316,10 @@ function applyInfoLayout() {
   const area = $("swipeArea");
   if (info.parentElement !== area) area.appendChild(info);
   requestAnimationFrame(() => {
-    if (document.body.scrollHeight > window.innerHeight + 2) {
+    const wrap = document.querySelector(".poster-wrap");
+    if (wrap.offsetHeight < window.innerHeight * 0.45) {
       card.classList.add("info-overlay");
-      document.querySelector(".poster-wrap").appendChild(info);
+      wrap.appendChild(info);
     }
   });
 }

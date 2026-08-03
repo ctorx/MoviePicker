@@ -147,11 +147,13 @@ button:active { transform: scale(0.98); }
 
 /* Grows to fill the free space; the max-height keeps the 2:3 box no wider
    than the column so nothing is pushed out of the viewport and no cropping. */
+/* The poster is the ONLY flexible piece of the card: the info block and the
+   action buttons keep their natural height, so they can never be overlapped.
+   If the poster gets squeezed too small, JS moves the info onto the cover. */
 .poster-wrap {
   position: relative;
   flex: 1;
-  min-height: 50vh;
-  min-height: 50dvh;
+  min-height: 140px;
   aspect-ratio: 2 / 3;
   max-height: calc((min(100vw, 480px) - 32px) * 1.5);
   margin: 0 auto;
@@ -217,6 +219,8 @@ button:active { transform: scale(0.98); }
 .badge-seen { color: var(--accent); border: 3px solid var(--accent); }
 .badge-block { color: var(--danger); border: 3px solid var(--danger); }
 
+.movie-info { flex-shrink: 0; }
+
 #movieTitle { font-size: 1.3rem; margin: 12px 0 4px; }
 #movieMeta { color: var(--muted); margin: 0; }
 #movieGenres { color: var(--muted); font-size: 0.85rem; margin: 2px 0 0; }
@@ -250,8 +254,7 @@ button:active { transform: scale(0.98); }
   display: flex;
   gap: 10px;
   margin-top: 14px;
-  position: sticky;
-  bottom: 12px;
+  flex-shrink: 0;
 }
 .actions button {
   flex: 1;
