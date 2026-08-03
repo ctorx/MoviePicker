@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.7.0";
+const APP_VERSION = "2.8.0";
 
 // ---------- State (localStorage) ----------
 
@@ -29,7 +29,9 @@ function normalizeLists() {
     lists.blocked = { ...lists.never, ...(lists.blocked || {}) };
     delete lists.never;
   }
-  for (const name of ["favorites", "skipped", "seen", "blocked"]) {
+  // Skips used to be tracked; they're ephemeral now.
+  delete lists.skipped;
+  for (const name of ["favorites", "seen", "blocked"]) {
     if (!lists[name] || typeof lists[name] !== "object") lists[name] = {};
   }
 }
@@ -164,12 +166,13 @@ function excludedIds() {
   return new Set(
     [
       ...Object.keys(lists.favorites),
-      ...Object.keys(lists.skipped),
       ...Object.keys(lists.seen),
       ...Object.keys(lists.blocked),
     ].map(Number)
   );
 }
+
+let lastShownId = null; // keeps a literal skip from re-serving the same movie immediately
 
 function shuffle(arr) {
   for (let i = arr.length - 1; i > 0; i--) {
@@ -212,7 +215,7 @@ async function pickMovie() {
       const data = page === 1 ? first : await tmdbFetch("/discover/movie", discoverParams(page));
       if (token !== pickToken) return;
       const candidates = shuffle(
-        data.results.filter((m) => !excluded.has(m.id) && m.poster_path)
+        data.results.filter((m) => !excluded.has(m.id) && m.id !== lastShownId && m.poster_path)
       );
 
       // Verify the real certification before accepting a candidate (see certAllowed).
@@ -227,7 +230,7 @@ async function pickMovie() {
       }
     }
 
-    showPickError("Looks like you've been through everything that matches! Widen the search, or clear your skipped list from the menu.");
+    showPickError("Looks like you've been through everything that matches! Try widening the search.");
   } catch (err) {
     if (token !== pickToken) return;
     showPickError(err.message || "Something went wrong. Check your connection.");
@@ -357,6 +360,15 @@ function markCurrent(listName) {
   lists[listName][current.id] = listEntry(current);
   saveLists();
   refreshCounts();
+  lastShownId = current.id;
+  current = null;
+  pickMovie();
+}
+
+// A literal skip: nothing is stored, the movie stays in the rotation.
+function skipCurrent() {
+  if (!current) return;
+  lastShownId = current.id;
   current = null;
   pickMovie();
 }
@@ -376,7 +388,6 @@ function toggleFavorite() {
 function refreshCounts() {
   const n = (o) => Object.keys(o).length;
   $("cntFavorites").textContent = n(lists.favorites) || "";
-  $("cntSkipped").textContent = n(lists.skipped) || "";
   $("cntSeen").textContent = n(lists.seen) || "";
   $("cntBlocked").textContent = n(lists.blocked) || "";
 }
@@ -816,7 +827,7 @@ function endDrag(e) {
       });
     });
   } else if (axis === "y" && dy < -90) {
-    swipeOut("y", -1, () => markCurrent("skipped"));
+    swipeOut("y", -1, skipCurrent);
   } else if (axis === "y" && dy > 90) {
     swipeOut("y", 1, () => markCurrent("seen"));
   } else {
@@ -831,7 +842,6 @@ swipeArea.addEventListener("pointercancel", endDrag);
 
 const LIST_LABELS = {
   favorites: "Favorites",
-  skipped: "Skipped",
   seen: "Seen",
   blocked: "Blocked",
 };
