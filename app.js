@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.4.2";
+const APP_VERSION = "2.5.0";
 
 // ---------- State (localStorage) ----------
 
@@ -44,6 +44,9 @@ const search = {
   actors: "",
   actorIds: [],
   actorNames: [],
+  director: "",
+  directorIds: [],
+  directorNames: [],
   maxRuntime: 120,
 };
 
@@ -109,14 +112,15 @@ function discoverParams(page) {
   };
   if (search.advanced) {
     if (search.genres.size) p.with_genres = [...search.genres].join(",");
-    if (search.actorIds.length) {
-      p.with_cast = search.actorIds.join(",");
-      // Actor filmographies are small; the popularity floors would empty them out.
+    if (search.actorIds.length) p.with_cast = search.actorIds.join(",");
+    if (search.directorIds.length) p.with_crew = search.directorIds.join(",");
+    if (search.actorIds.length || search.directorIds.length) {
+      // Personal filmographies are small; the popularity floors would empty them out.
       p["vote_count.gte"] = "10";
       delete p["vote_average.gte"];
       if (settings.age >= 17) {
         // The certification join excludes anything TMDB has no US rating for,
-        // which guts actor searches. Adults don't need it (picks are verified).
+        // which guts person searches. Adults don't need it (picks are verified).
         delete p.certification_country;
         delete p["certification.lte"];
       }
@@ -124,6 +128,13 @@ function discoverParams(page) {
     if (search.maxRuntime) p["with_runtime.lte"] = String(search.maxRuntime);
   }
   return p;
+}
+
+// with_crew matches any crew role, so confirm the person actually directed.
+function directorOk(m) {
+  if (!search.advanced || !search.directorIds.length) return true;
+  const crew = m.credits?.crew || [];
+  return crew.some((c) => c.job === "Director" && search.directorIds.includes(c.id));
 }
 
 function searchSummary() {
@@ -135,6 +146,7 @@ function searchSummary() {
       bits.push(genreCache.filter((g) => search.genres.has(g.id)).map((g) => g.name).join("/"));
     }
     if (search.actorNames.length) bits.push("with " + search.actorNames.join(" & "));
+    if (search.directorNames.length) bits.push("directed by " + search.directorNames.join(" & "));
     if (search.maxRuntime) bits.push("under " + runtimeText(search.maxRuntime));
   }
   return bits.join(" · ");
@@ -209,7 +221,7 @@ async function pickMovie() {
           append_to_response: "credits,videos,release_dates",
         });
         if (token !== pickToken) return;
-        if (!certAllowed(details)) continue;
+        if (!certAllowed(details) || !directorOk(details)) continue;
         renderMovie(details);
         return;
       }
@@ -466,6 +478,7 @@ function openSearch() {
   $("chkAdvanced").checked = search.advanced;
   $("advancedBox").hidden = !search.advanced;
   $("inpActors").value = search.actors;
+  $("inpDirector").value = search.director;
   buildRuntimeOptions();
   if (search.advanced) renderGenreChips();
   updateCertHint();
@@ -530,20 +543,30 @@ $("btnApplySearch").addEventListener("click", async () => {
   try {
     if (search.advanced) {
       search.actors = $("inpActors").value;
+      search.director = $("inpDirector").value;
       search.maxRuntime = $("selRuntime").value ? parseInt($("selRuntime").value, 10) : 0;
-      const { ids, resolved, missing } = await resolveActors(search.actors);
+      const actors = await resolveActors(search.actors);
+      const directors = await resolveActors(search.director);
+      const missing = [...actors.missing, ...directors.missing];
       if (missing.length) {
         errEl.textContent = "Couldn't find: " + missing.join(", ");
         errEl.hidden = false;
         return;
       }
-      search.actorIds = ids;
-      search.actorNames = resolved;
+      search.actorIds = actors.ids;
+      search.actorNames = actors.resolved;
+      search.directorIds = directors.ids;
+      search.directorNames = directors.resolved;
       // Confirms who the names matched, so a typo is easy to catch.
-      if (resolved.length) showToast("Movies with " + resolved.join(" & "));
+      const who = [];
+      if (actors.resolved.length) who.push("with " + actors.resolved.join(" & "));
+      if (directors.resolved.length) who.push("directed by " + directors.resolved.join(" & "));
+      if (who.length) showToast("Movies " + who.join(", "));
     } else {
       search.actorIds = [];
       search.actorNames = [];
+      search.directorIds = [];
+      search.directorNames = [];
     }
     closeModal("modalSearch");
     show("screen-pick");
