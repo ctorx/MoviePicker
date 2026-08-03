@@ -1,6 +1,6 @@
 "use strict";
 
-const CACHE = "movie-night-v13";
+const CACHE = "movie-night-v14";
 const SHELL = [
   "./",
   "./index.html",
@@ -11,7 +11,13 @@ const SHELL = [
 ];
 
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)));
+  // cache: "reload" bypasses the browser HTTP cache (GitHub Pages serves
+  // max-age=600), otherwise a fresh install can re-cache stale files.
+  e.waitUntil(
+    caches.open(CACHE).then((c) =>
+      c.addAll(SHELL.map((u) => new Request(u, { cache: "reload" })))
+    )
+  );
 });
 
 // New versions wait until the app's "Update now" button tells them to take over.
