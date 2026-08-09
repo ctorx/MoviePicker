@@ -1,6 +1,6 @@
 "use strict";
 
-const CACHE = "movie-night-v23";
+const CACHE = "movie-night-v24";
 const SHELL = [
   "./",
   "./index.html",

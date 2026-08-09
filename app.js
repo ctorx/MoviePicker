@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.13.0";
+const APP_VERSION = "2.14.0";
 
 // ---------- State (localStorage) ----------
 
@@ -184,22 +184,110 @@ function matchesSearch(m) {
   return crewOk(m);
 }
 
-// Discover already filtered server-side, so those picks only need their
-// certification and crew jobs verified; title results need the full check.
-function pickAllowed(m) {
-  return search.title ? matchesSearch(m) : certAllowed(m) && crewOk(m);
+// ---------- Title lookups ----------
+
+// Discover has no query parameter, so a title goes through /search/movie and
+// is ordered here instead: closest matches first, and within equally close
+// matches oldest to newest, so a series plays in the order it was released.
+
+function titleWords(s) {
+  return s.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, " ").trim().split(" ");
 }
 
-// Title lookups can't use /discover — it has no query parameter.
-function fetchResults(page) {
-  if (search.title) {
-    return tmdbFetch("/search/movie", {
+function startsWithWords(words, prefix) {
+  return prefix.every((w, i) => words[i] === w);
+}
+
+// 0 = the title is exactly the query, 1 = it opens with it ("Harry Potter
+// and…"), 2 = it contains it ("…World of Harry Potter"), 3 = TMDB matched it
+// some looser way (a typo, an alternate title).
+function titleRank(title, query) {
+  const t = titleWords(title || "");
+  const q = titleWords(query);
+  if (!q[0]) return 3;
+  if (startsWithWords(t, q)) return t.length === q.length ? 0 : 1;
+  for (let i = 1; i <= t.length - q.length; i++) {
+    if (startsWithWords(t.slice(i), q)) return 2;
+  }
+  return 3;
+}
+
+function byMatchThenRelease(query) {
+  return (a, b) => {
+    const rank = titleRank(a.title, query) - titleRank(b.title, query);
+    if (rank) return rank;
+    // Undated entries sort last rather than leading the series.
+    return (a.release_date || "9999").localeCompare(b.release_date || "9999");
+  };
+}
+
+// Sorting by date needs the whole result set, so it's fetched once per query
+// and kept: stepping through a series costs one request per movie, not five.
+let titlePool = { query: null, movies: [], total: 0 };
+
+async function ensureTitlePool(token) {
+  if (titlePool.query === search.title) return true;
+  const fetchPage = (page) =>
+    tmdbFetch("/search/movie", {
       query: search.title,
       include_adult: "false",
       page: String(page),
     });
+
+  const first = await fetchPage(1);
+  if (token !== pickToken) return false;
+  const movies = [...first.results];
+  for (let p = 2; p <= Math.min(first.total_pages, 5); p++) {
+    const data = await fetchPage(p);
+    if (token !== pickToken) return false;
+    movies.push(...data.results);
   }
-  return tmdbFetch("/discover/movie", discoverParams(page));
+  movies.sort(byMatchThenRelease(search.title));
+  titlePool = { query: search.title, movies, total: first.total_results };
+  return true;
+}
+
+async function pickFromTitle(token) {
+  if (!(await ensureTitlePool(token))) return;
+
+  if (announceCount) {
+    announceCount = false;
+    if (titlePool.total > 0) {
+      showToast(
+        titlePool.total.toLocaleString() + (titlePool.total === 1 ? " match" : " matches"),
+        null,
+        2000
+      );
+    }
+  }
+
+  // Nothing is held back from a title lookup — a movie already sitting in a
+  // list can still be found by name.
+  const usable = titlePool.movies.filter((m) => m.poster_path);
+  if (!usable.length) {
+    showPickError(
+      'No movies found for "' + search.title + '". Check the spelling, or try fewer words.'
+    );
+    return;
+  }
+  let fresh = usable.filter((m) => !sessionShown.has(m.id));
+  if (!fresh.length) {
+    // Been through them all this session — start the series over.
+    sessionShown.clear();
+    fresh = usable.filter((m) => m.id !== lastShownId);
+  }
+
+  for (const movie of fresh) {
+    const details = await tmdbFetch("/movie/" + movie.id, {
+      append_to_response: "credits,videos,release_dates",
+    });
+    if (token !== pickToken) return;
+    sessionShown.add(movie.id); // rejected ones too, so we don't refetch them
+    if (!matchesSearch(details)) continue;
+    servePick(details);
+    return;
+  }
+  showPickError("You've been through every match for this search. Try widening it.");
 }
 
 function searchSummary() {
@@ -265,6 +353,13 @@ function servePick(details) {
   renderMovie(details);
 }
 
+// During a title lookup a favorite has to be one of the movies that lookup
+// found — TMDB's own answer to "does this match", typos and all.
+function eligibleForInjection(id) {
+  if (!search.title) return true;
+  return titlePool.query === search.title && titlePool.movies.some((m) => m.id === id);
+}
+
 // "rendered" | "stale" (a newer pick started) | "none" (fall back to discover)
 async function tryFavoritePick(token) {
   // The stored year is enough to drop the obvious misses before spending a
@@ -273,6 +368,7 @@ async function tryFavoritePick(token) {
     Object.entries(lists.favorites)
       .filter(([id, e]) =>
         Number(id) !== lastShownId &&
+        eligibleForInjection(Number(id)) &&
         (!settings.fromYear || parseInt(e.year, 10) >= settings.fromYear))
       .map(([id]) => Number(id))
   );
@@ -302,21 +398,19 @@ async function pickMovie() {
     showPickState("loading");
   }
   try {
-    // Not on the first pick of a new search — that one belongs to the search
-    // (and owns the result-count toast) — and never during a title lookup,
-    // where the pool is whatever the user typed.
+    // Not on the first pick of a new search — that one belongs to the search,
+    // and owns the result-count toast.
     if (!announceCount &&
-        !search.title &&
         (picksServed + 1) % FAVORITE_EVERY === 0 &&
         Object.keys(lists.favorites).length) {
       const outcome = await tryFavoritePick(token);
       if (outcome !== "none") return;
     }
 
-    // A title lookup should surface exactly what was asked for, so a movie
-    // already sitting in a list isn't held back from it.
-    const excluded = search.title ? new Set() : excludedIds();
-    const first = await fetchResults(1);
+    if (search.title) return await pickFromTitle(token);
+
+    const excluded = excludedIds();
+    const first = await tmdbFetch("/discover/movie", discoverParams(1));
     if (token !== pickToken) return;
 
     if (announceCount) {
@@ -338,9 +432,7 @@ async function pickMovie() {
 
     // Small pools: random pages would repeat movies after a few skips.
     // Walk the entire result set instead, never repeating until it's spent.
-    // Title lookups always walk, in TMDB's relevance order, so the movie you
-    // named comes up first and skipping steps through the other matches.
-    if (search.title || first.total_results < 100) {
+    if (first.total_results < 100) {
       const pool = [];
       const checked = new Set(); // details already fetched during this pick
       const maxPages = Math.min(first.total_pages, 5);
@@ -356,17 +448,16 @@ async function pickMovie() {
           });
           if (token !== pickToken) return "stale";
           sessionShown.add(movie.id); // cert-rejected too, so we don't refetch them
-          if (!pickAllowed(details)) continue;
+          if (!certAllowed(details) || !crewOk(details)) continue;
           servePick(details);
           return "served";
         }
         return "none";
       };
 
-      // Pages are pulled in only as far as needed: a title lookup normally
-      // finds its movie on the first one.
+      // Pages are pulled in only as far as the walk actually needs them.
       for (let p = 1; p <= maxPages; p++) {
-        const data = p === 1 ? first : await fetchResults(p);
+        const data = p === 1 ? first : await tmdbFetch("/discover/movie", discoverParams(p));
         if (token !== pickToken) return;
         pool.push(...data.results.filter((m) => !excluded.has(m.id) && m.poster_path));
         if (await walk(pool.filter((m) => !sessionShown.has(m.id))) !== "none") return;
@@ -392,7 +483,7 @@ async function pickMovie() {
       }
       tried.add(page);
 
-      const data = page === 1 ? first : await fetchResults(page);
+      const data = page === 1 ? first : await tmdbFetch("/discover/movie", discoverParams(page));
       if (token !== pickToken) return;
       const candidates = shuffle(
         data.results.filter((m) => !excluded.has(m.id) && m.id !== lastShownId && m.poster_path)
@@ -404,7 +495,7 @@ async function pickMovie() {
           append_to_response: "credits,videos,release_dates",
         });
         if (token !== pickToken) return;
-        if (!pickAllowed(details)) continue;
+        if (!certAllowed(details) || !crewOk(details)) continue;
         servePick(details);
         return;
       }
