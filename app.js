@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.22.0";
+const APP_VERSION = "2.22.1";
 
 // ---------- State (localStorage) ----------
 
@@ -417,17 +417,27 @@ function byMatchThenRelease(query) {
   };
 }
 
-// Title match first, then a mention in the description, then tag-only matches;
-// most popular first inside each of those, since a broad query has no series
-// order to follow.
-function byBreadthThenPopularity(query) {
+// Where the word was found weights popularity rather than overriding it.
+// Ranking strictly by where it matched buries every tagged movie behind the
+// full run of obscure titles that happen to contain the word — search
+// "zombie" and 28 Days Later lands past forty of them, which reads as a search
+// that never left the titles at all.
+const MATCH_WEIGHT = { title: 3, overview: 1.5, tag: 1 };
+
+function byRelevance(query) {
   const term = query.toLowerCase();
-  const tier = (m) => {
-    if (titleRank(m.title, query) <= 2) return 0;
-    if ((m.overview || "").toLowerCase().includes(term)) return 1;
-    return 2;
+  const exact = (m) => titleRank(m.title, query) === 0;
+  const score = (m) => {
+    const where = titleRank(m.title, query) <= 2
+      ? "title"
+      : (m.overview || "").toLowerCase().includes(term) ? "overview" : "tag";
+    return (m.popularity || 0) * MATCH_WEIGHT[where];
   };
-  return (a, b) => (tier(a) - tier(b)) || (b.popularity || 0) - (a.popularity || 0);
+  return (a, b) => {
+    // Typing a movie's exact name means that movie, whatever its popularity.
+    if (exact(a) !== exact(b)) return exact(a) ? -1 : 1;
+    return score(b) - score(a);
+  };
 }
 
 // Sorting needs the whole result set, so it's fetched once per query and kept:
@@ -435,8 +445,8 @@ function byBreadthThenPopularity(query) {
 // mode the filters shape the tag half of the pool, so they belong in the key.
 function queryPoolKey() {
   return broadSearch()
-    ? "any:" + search.query + ":" + JSON.stringify(discoverParams(1))
-    : "title:" + search.query;
+    ? "any:" + search.query.toLowerCase() + ":" + JSON.stringify(discoverParams(1))
+    : "title:" + search.query.toLowerCase();
 }
 
 let queryPool = { key: null, movies: [], total: 0 };
@@ -470,7 +480,11 @@ async function ensureQueryPool(token) {
   const first = await searchPage(1);
   if (token !== pickToken) return false;
   const movies = [...first.results];
-  for (let p = 2; p <= Math.min(first.total_pages, 5); p++) {
+  // Title mode walks a whole series, so it takes the long tail. A broad query
+  // only needs TMDB's best title matches — the rest is padding it would sort
+  // to the bottom anyway, and every page is another request.
+  const titlePages = broadSearch() ? 2 : 5;
+  for (let p = 2; p <= Math.min(first.total_pages, titlePages); p++) {
     const data = await searchPage(p);
     if (token !== pickToken) return false;
     movies.push(...data.results);
@@ -498,7 +512,7 @@ async function ensureQueryPool(token) {
     }
   }
 
-  movies.sort(broadSearch() ? byBreadthThenPopularity(search.query) : byMatchThenRelease(search.query));
+  movies.sort(broadSearch() ? byRelevance(search.query) : byMatchThenRelease(search.query));
   queryPool = { key, movies, total: broadSearch() ? movies.length : first.total_results };
   return true;
 }
