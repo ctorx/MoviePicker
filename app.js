@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.25.0";
+const APP_VERSION = "2.25.1";
 
 // ---------- State (localStorage) ----------
 
@@ -771,7 +771,9 @@ async function pickMovie() {
 async function openMovieById(id) {
   const token = ++pickToken; // cancel any in-flight pick
   showPickState("loading");
-  navHome();
+  // The movie gets its own entry on top of the list it was opened from, so
+  // going back lands on that list rather than dropping out to the card.
+  navPush("movie");
   try {
     const details = await fetchMovie(id);
     if (token !== pickToken) return;
@@ -931,8 +933,12 @@ function refreshCounts() {
 
 // ---------- Navigation (URL hash <-> overlays) ----------
 // Every overlay gets a history entry (#search, #info, #settings, #menu,
-// #list-*, #trailer) so the browser/phone back button closes it instead of
-// exiting the app. The hash is the single source of truth for what's open.
+// #list-*, #trailer, #rate) so the browser/phone back button closes it instead
+// of exiting the app. The hash is the single source of truth for what's open.
+//
+// #movie is the odd one: it opens no overlay, it closes them all. Opening a
+// movie from a list shows the card, and the entry is what lets the back button
+// return to the list it came from.
 
 const MODALS = ["modalSearch", "modalInfo", "modalList", "modalSettings", "modalRate"];
 
