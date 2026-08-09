@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.12.0";
+const APP_VERSION = "2.13.0";
 
 // ---------- State (localStorage) ----------
 
@@ -911,6 +911,12 @@ function openInfo() {
 
   trailerKey = trailerKeyFor(m);
   $("btnTrailer").hidden = !trailerKey;
+  // The Parents Guide is the unmetered second opinion, and TMDB hands us the
+  // exact IMDb id, so it's a real deep link rather than a guessed slug.
+  $("lnkIMDb").hidden = !m.imdb_id;
+  if (m.imdb_id) {
+    $("lnkIMDb").href = "https://www.imdb.com/title/" + m.imdb_id + "/parentalguide";
+  }
   $("lnkCSM").href = "https://www.commonsensemedia.org/movie-reviews/" + csmSlug(m.title);
   navPush("info");
 }
