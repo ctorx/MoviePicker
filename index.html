@@ -85,6 +85,11 @@
       </button>
     </div>
     <div class="modal-body">
+      <label for="inpTitle">Looking for a <strong>specific movie</strong>?</label>
+      <input id="inpTitle" type="text" autocomplete="off" placeholder="blank = surprise me">
+      <p class="hint">Type a title to go straight to it. Skipping steps through the other
+        matches. Everything below still applies.</p>
+
       <label for="inpAge">How old is the <strong>youngest</strong> person watching?</label>
       <input id="inpAge" type="number" min="1" max="120" inputmode="numeric" placeholder="blank = 21">
       <p class="hint" id="certHint"></p>
@@ -144,7 +149,7 @@
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5l11 7-11 7V5z" fill="currentColor"/></svg>
               Watch trailer
             </button>
-            <a id="lnkCSM" class="csm-btn" target="_blank" rel="noopener">
+            <a id="lnkCSM" class="csm-btn" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6M20 4L10 14M9 5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
               Common Sense Media
             </a>
@@ -219,12 +224,14 @@
 
   <div id="trailerOverlay" class="trailer-overlay" hidden>
     <div class="trailer-top">
-      <a id="lnkTrailerYT" target="_blank" rel="noopener">Open on YouTube ↗</a>
+      <a id="lnkTrailerYT" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">Open on YouTube ↗</a>
       <button id="btnCloseTrailer" class="icon-btn" title="Close">
         <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="5" y1="5" x2="19" y2="19" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="19" y1="5" x2="5" y2="19" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       </button>
     </div>
-    <iframe id="trailerFrame" title="Trailer" allow="autoplay; fullscreen; encrypted-media" allowfullscreen></iframe>
+    <!-- The player iframe is created on open and removed on close (see app.js);
+         it must never be a long-lived element whose src gets reassigned. -->
+    <div id="trailerFrameWrap" class="trailer-frame"></div>
   </div>
 
   <div id="toast" class="toast" hidden>

@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.11.0";
+const APP_VERSION = "2.12.0";
 
 // ---------- State (localStorage) ----------
 
@@ -41,6 +41,7 @@ function saveLists() { store.save("mp_lists", lists); }
 
 // Session-only search filters (advanced is off by default on every start).
 const search = {
+  title: "", // a name to look up; switches the pool to /search/movie
   advanced: false,
   genres: new Set(),
   genreMode: "all", // "all" = must have every selected genre, "any" = at least one
@@ -161,8 +162,49 @@ function crewOk(m) {
   return true;
 }
 
+// Every filter discover normally applies server-side, re-checked against a
+// fully loaded movie. Needed wherever a candidate didn't come from discover:
+// injected favorites, and title searches (/search/movie takes no filters).
+function matchesSearch(m) {
+  if (!certAllowed(m)) return false;
+  const year = parseInt((m.release_date || "").slice(0, 4), 10);
+  if (settings.fromYear && !(year >= settings.fromYear)) return false;
+  if (!search.advanced) return true;
+  if (search.genres.size) {
+    const ids = (m.genres || []).map((g) => g.id);
+    const want = [...search.genres];
+    const ok = search.genreMode === "any"
+      ? want.some((g) => ids.includes(g))
+      : want.every((g) => ids.includes(g));
+    if (!ok) return false;
+  }
+  if (search.maxRuntime && m.runtime && m.runtime > search.maxRuntime) return false;
+  const cast = m.credits?.cast || [];
+  if (!search.actorIds.every((id) => cast.some((c) => c.id === id))) return false;
+  return crewOk(m);
+}
+
+// Discover already filtered server-side, so those picks only need their
+// certification and crew jobs verified; title results need the full check.
+function pickAllowed(m) {
+  return search.title ? matchesSearch(m) : certAllowed(m) && crewOk(m);
+}
+
+// Title lookups can't use /discover — it has no query parameter.
+function fetchResults(page) {
+  if (search.title) {
+    return tmdbFetch("/search/movie", {
+      query: search.title,
+      include_adult: "false",
+      page: String(page),
+    });
+  }
+  return tmdbFetch("/discover/movie", discoverParams(page));
+}
+
 function searchSummary() {
   const bits = [];
+  if (search.title) bits.push('matching "' + search.title + '"');
   if (effectiveAge() < 17) bits.push("rated " + certForAge(effectiveAge()) + " or under");
   if (settings.fromYear) bits.push(settings.fromYear + " and newer");
   if (search.advanced) {
@@ -212,9 +254,10 @@ let announceCount = false; // show a result-count toast after the next fetch (ne
 
 // Favorites are excluded from discover results, so every FAVORITE_EVERY-th
 // pick hands one back deliberately: a random favorite instead of a new movie.
-// Only the age rating still applies — the rest of the search doesn't, because
-// the point is resurfacing something already loved, not another filtered result.
+// It still has to satisfy the current search, so a favorite only turns up
+// where it would have been a legitimate result anyway.
 const FAVORITE_EVERY = 20;
+const FAVORITE_TRIES = 5; // details fetches spent looking for a qualifying one
 let picksServed = 0;
 
 function servePick(details) {
@@ -224,9 +267,16 @@ function servePick(details) {
 
 // "rendered" | "stale" (a newer pick started) | "none" (fall back to discover)
 async function tryFavoritePick(token) {
-  const ids = shuffle(Object.keys(lists.favorites).map(Number))
-    .filter((id) => id !== lastShownId);
-  for (const id of ids.slice(0, 3)) {
+  // The stored year is enough to drop the obvious misses before spending a
+  // request on them; everything else needs the full movie.
+  const ids = shuffle(
+    Object.entries(lists.favorites)
+      .filter(([id, e]) =>
+        Number(id) !== lastShownId &&
+        (!settings.fromYear || parseInt(e.year, 10) >= settings.fromYear))
+      .map(([id]) => Number(id))
+  );
+  for (const id of ids.slice(0, FAVORITE_TRIES)) {
     let details;
     try {
       details = await tmdbFetch("/movie/" + id, {
@@ -236,7 +286,7 @@ async function tryFavoritePick(token) {
       continue; // dead id or a network blip — a normal pick still gets a movie
     }
     if (token !== pickToken) return "stale";
-    if (!certAllowed(details)) continue;
+    if (!matchesSearch(details)) continue;
     servePick(details);
     showToast("One from your favorites ❤", null, 2500);
     return "rendered";
@@ -253,16 +303,20 @@ async function pickMovie() {
   }
   try {
     // Not on the first pick of a new search — that one belongs to the search
-    // (and owns the result-count toast).
+    // (and owns the result-count toast) — and never during a title lookup,
+    // where the pool is whatever the user typed.
     if (!announceCount &&
+        !search.title &&
         (picksServed + 1) % FAVORITE_EVERY === 0 &&
         Object.keys(lists.favorites).length) {
       const outcome = await tryFavoritePick(token);
       if (outcome !== "none") return;
     }
 
-    const excluded = excludedIds();
-    const first = await tmdbFetch("/discover/movie", discoverParams(1));
+    // A title lookup should surface exactly what was asked for, so a movie
+    // already sitting in a list isn't held back from it.
+    const excluded = search.title ? new Set() : excludedIds();
+    const first = await fetchResults(1);
     if (token !== pickToken) return;
 
     if (announceCount) {
@@ -284,31 +338,45 @@ async function pickMovie() {
 
     // Small pools: random pages would repeat movies after a few skips.
     // Walk the entire result set instead, never repeating until it's spent.
-    if (first.total_results < 100) {
-      const pages = [first];
-      for (let p = 2; p <= Math.min(first.total_pages, 5); p++) {
-        pages.push(await tmdbFetch("/discover/movie", discoverParams(p)));
+    // Title lookups always walk, in TMDB's relevance order, so the movie you
+    // named comes up first and skipping steps through the other matches.
+    if (search.title || first.total_results < 100) {
+      const pool = [];
+      const checked = new Set(); // details already fetched during this pick
+      const maxPages = Math.min(first.total_pages, 5);
+
+      // Serves the first candidate that survives its details check.
+      // "served" | "stale" (a newer pick started) | "none"
+      const walk = async (candidates) => {
+        for (const movie of candidates) {
+          if (checked.has(movie.id)) continue;
+          checked.add(movie.id);
+          const details = await tmdbFetch("/movie/" + movie.id, {
+            append_to_response: "credits,videos,release_dates",
+          });
+          if (token !== pickToken) return "stale";
+          sessionShown.add(movie.id); // cert-rejected too, so we don't refetch them
+          if (!pickAllowed(details)) continue;
+          servePick(details);
+          return "served";
+        }
+        return "none";
+      };
+
+      // Pages are pulled in only as far as needed: a title lookup normally
+      // finds its movie on the first one.
+      for (let p = 1; p <= maxPages; p++) {
+        const data = p === 1 ? first : await fetchResults(p);
         if (token !== pickToken) return;
+        pool.push(...data.results.filter((m) => !excluded.has(m.id) && m.poster_path));
+        if (await walk(pool.filter((m) => !sessionShown.has(m.id))) !== "none") return;
       }
-      const pool = pages
-        .flatMap((d) => d.results)
-        .filter((m) => !excluded.has(m.id) && m.poster_path);
-      let fresh = pool.filter((m) => !sessionShown.has(m.id));
-      if (!fresh.length) {
-        // Whole pool seen this session — start the cycle over.
-        sessionShown.clear();
-        fresh = pool.filter((m) => m.id !== lastShownId);
-      }
-      for (const movie of fresh) {
-        const details = await tmdbFetch("/movie/" + movie.id, {
-          append_to_response: "credits,videos,release_dates",
-        });
-        if (token !== pickToken) return;
-        sessionShown.add(movie.id); // cert-rejected too, so we don't refetch them
-        if (!certAllowed(details) || !crewOk(details)) continue;
-        servePick(details);
-        return;
-      }
+
+      // Whole pool seen this session — start the cycle over.
+      sessionShown.clear();
+      checked.clear();
+      if (await walk(pool.filter((m) => m.id !== lastShownId)) !== "none") return;
+
       showPickError("You've been through everything that matches this search. Try widening it.");
       return;
     }
@@ -324,7 +392,7 @@ async function pickMovie() {
       }
       tried.add(page);
 
-      const data = page === 1 ? first : await tmdbFetch("/discover/movie", discoverParams(page));
+      const data = page === 1 ? first : await fetchResults(page);
       if (token !== pickToken) return;
       const candidates = shuffle(
         data.results.filter((m) => !excluded.has(m.id) && m.id !== lastShownId && m.poster_path)
@@ -336,7 +404,7 @@ async function pickMovie() {
           append_to_response: "credits,videos,release_dates",
         });
         if (token !== pickToken) return;
-        if (!certAllowed(details) || !crewOk(details)) continue;
+        if (!pickAllowed(details)) continue;
         servePick(details);
         return;
       }
@@ -560,10 +628,13 @@ function applyHash() {
 
   setShown("modalSearch", h === "search");
   setShown("modalSettings", h === "settings");
-  setShown("modalInfo", h === "info" || h === "trailer");
+  // A trailer started from the card has no info screen behind it to reveal.
+  setShown("modalInfo", h === "info" || (h === "trailer" && trailerFromInfo));
 
-  if (h === "trailer") {
-    $("trailerOverlay").hidden = false; // content was set by openTrailer
+  // No player mounted means this isn't a live trailer entry (a stale hash);
+  // leave the overlay closed rather than showing an empty black screen.
+  if (h === "trailer" && $("trailerFrameWrap").firstChild) {
+    $("trailerOverlay").hidden = false; // player was mounted by openTrailer
   } else if (!$("trailerOverlay").hidden) {
     closeTrailerUI();
   }
@@ -651,6 +722,7 @@ async function renderGenreChips() {
 }
 
 function openSearch() {
+  $("inpTitle").value = search.title;
   $("inpAge").value = settings.age || "";
   $("inpYear").value = settings.fromYear || "";
   $("chkAdvanced").checked = search.advanced;
@@ -716,6 +788,7 @@ $("btnApplySearch").addEventListener("click", async () => {
   settings.fromYear = year;
   saveSettings();
 
+  search.title = $("inpTitle").value.trim();
   search.advanced = $("chkAdvanced").checked;
   const btn = $("btnApplySearch");
   btn.disabled = true;
@@ -846,6 +919,7 @@ function openInfo() {
 // that person: all time (blank year), blank age (21), no other filters.
 function forcePersonSearch(kind, id, name) {
   search.advanced = true;
+  search.title = "";
   search.genres.clear();
   search.genreMode = "all";
   search.maxRuntime = 0;
@@ -887,7 +961,30 @@ function csmSlug(title) {
 
 // Embedded player instead of a YouTube link so we can go fullscreen and
 // (where the browser allows it — Android, not iOS) lock landscape.
+//
+// The player lives in an iframe that is built on open and removed on close.
+// That is not tidiness: pointing an *existing* iframe at a new src is a
+// navigation, and it leaves a stray entry in the page's history — two per
+// trailer, once for the video and once for the teardown. Those entries share
+// our URL, so a back press would land on one and appear to do nothing, and the
+// Back button would need extra taps to reach the card. A freshly inserted
+// iframe's first load replaces instead of pushing, and discarding the element
+// takes its history with it.
 let trailerKey = null;
+let trailerFromInfo = false; // which screen the trailer sits on top of
+
+function mountTrailer(key) {
+  const frame = document.createElement("iframe");
+  frame.title = "Trailer";
+  frame.allow = "autoplay; fullscreen; encrypted-media";
+  frame.allowFullscreen = true;
+  // youtube-nocookie serves the player without tracking cookies and keeps the
+  // view out of the viewer's YouTube watch history.
+  frame.src =
+    "https://www.youtube-nocookie.com/embed/" + key +
+    "?autoplay=1&playsinline=1&rel=0";
+  $("trailerFrameWrap").replaceChildren(frame);
+}
 
 function trailerKeyFor(m) {
   const vids = m?.videos?.results || [];
@@ -900,9 +997,7 @@ function trailerKeyFor(m) {
 
 async function openTrailer(key) {
   if (!key) return;
-  $("trailerFrame").src =
-    "https://www.youtube-nocookie.com/embed/" + key +
-    "?autoplay=1&playsinline=1&rel=0";
+  mountTrailer(key);
   $("lnkTrailerYT").href = "https://www.youtube.com/watch?v=" + key;
   navPush("trailer");
   const overlay = $("trailerOverlay");
@@ -920,17 +1015,24 @@ async function openTrailer(key) {
 // Visual teardown only — navigation state is handled by the hash.
 function closeTrailerUI() {
   $("trailerOverlay").hidden = true;
-  $("trailerFrame").src = "";
+  $("trailerFrameWrap").replaceChildren(); // stops playback and drops its history
   try {
     if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock();
   } catch {}
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
 }
 
-$("btnTrailer").addEventListener("click", () => openTrailer(trailerKey));
+$("btnTrailer").addEventListener("click", () => {
+  trailerFromInfo = true;
+  openTrailer(trailerKey);
+});
 $("btnCloseTrailer").addEventListener("click", navBack);
+
+// Leaving fullscreen by gesture should close the trailer too. Keyed off the
+// hash, not the overlay: when the *hash* is what closed the trailer, fullscreen
+// exits as part of the teardown and must not bounce us back a second time.
 document.addEventListener("fullscreenchange", () => {
-  if (!document.fullscreenElement && !$("trailerOverlay").hidden) navBack();
+  if (!document.fullscreenElement && location.hash === "#trailer") navBack();
 });
 
 // ---------- Card actions & swiping ----------
@@ -1011,8 +1113,12 @@ function handleTap() {
     clearTimeout(tapTimer);
     tapTimer = null;
     const key = trailerKeyFor(current);
-    if (key) openTrailer(key);
-    else showToast("No trailer available for this one.");
+    if (key) {
+      trailerFromInfo = false;
+      openTrailer(key);
+    } else {
+      showToast("No trailer available for this one.");
+    }
   } else {
     tapTimer = setTimeout(() => {
       tapTimer = null;
