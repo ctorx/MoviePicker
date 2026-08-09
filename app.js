@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.22.3";
+const APP_VERSION = "2.23.0";
 
 // ---------- State (localStorage) ----------
 
@@ -39,6 +39,17 @@ function normalizeLists() {
   for (const name of ["watchlist", "seen", "blocked"]) {
     if (!lists[name] || typeof lists[name] !== "object") lists[name] = {};
   }
+  // Anything saved before entries were timestamped gets one now. Without it
+  // there's nothing to hold against, so every one of them counts as settled
+  // and comes back around straight away.
+  let stamped = false;
+  for (const entry of Object.values(lists.watchlist)) {
+    if (!entry.added) {
+      entry.added = Date.now();
+      stamped = true;
+    }
+  }
+  if (stamped) saveLists();
 }
 
 function saveSettings() { store.save("mp_settings", settings); }
@@ -951,6 +962,8 @@ function addToWatchlist(m) {
 function markCurrent(listName, thenPick = true) {
   if (!current) return;
   lists[listName][current.id] = listEntry(current);
+  // Blocked or watched settles it either way, so it comes off the watchlist.
+  delete lists.watchlist[current.id];
   saveLists();
   refreshCounts();
   lastShownId = current.id;
@@ -1695,7 +1708,10 @@ function endDrag(e) {
 
   if (axis === "x" && dx > 90) {
     swipeOut("x", 1, () => {
-      if (current && !lists.watchlist[current.id]) {
+      // Saved again even when it's already on the list: this is how a movie
+      // that came back around gets put off for another day rather than
+      // silently doing nothing.
+      if (current) {
         addToWatchlist(current);
         saveLists();
         refreshCounts();
@@ -1705,11 +1721,13 @@ function endDrag(e) {
     });
   } else if (axis === "x" && dx < -90) {
     const blocked = current;
+    const wasSaved = lists.watchlist[blocked.id]; // markCurrent drops it
     swipeOut("x", -1, () => {
       markCurrent("blocked");
       // Blocking is easy to hit by accident on a fling; offer a way back.
       showToast(`Blocked "${blocked.title}"`, () => {
         delete lists.blocked[blocked.id];
+        if (wasSaved) lists.watchlist[blocked.id] = wasSaved;
         saveLists();
         refreshCounts();
       });
