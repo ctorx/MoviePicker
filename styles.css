@@ -566,10 +566,16 @@ button:active { transform: scale(0.98); }
 
 .row-stars { margin-top: 3px; padding: 2px 0; }
 
-.stars-lg { justify-content: center; gap: 6px; margin: 16px 0 4px; }
-.stars-lg .star { padding: 4px; }
-.stars-lg .star svg { width: 36px; height: 36px; }
-.stars-lg .star:active { transform: scale(0.9); }
+/* Thumb-sized targets: no gap between them, so the padding of each star runs
+   up against the next and there's nowhere between two stars to miss. */
+.stars-lg { justify-content: center; gap: 0; margin: 12px 0 4px; }
+.stars-lg .star {
+  padding: 12px 8px;
+  touch-action: manipulation; /* no double-tap-zoom delay on the tap */
+  -webkit-tap-highlight-color: transparent;
+}
+.stars-lg .star svg { width: 40px; height: 40px; }
+.stars-lg .star:active { transform: scale(0.88); }
 
 /* Sits above the toast so a pick loading behind it can't cover the sheet. */
 .sheet-overlay {
@@ -583,8 +589,8 @@ button:active { transform: scale(0.98); }
   background: rgba(0, 0, 0, 0.6);
 }
 .sheet {
-  width: min(340px, 100%);
-  padding: 20px;
+  width: min(360px, 100%);
+  padding: 20px 16px;
   border-radius: var(--radius);
   background: var(--card);
   border: 1px solid var(--border);
