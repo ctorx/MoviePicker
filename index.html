@@ -129,6 +129,27 @@
         <label for="inpComposer">Composer</label>
         <input id="inpComposer" type="text" autocomplete="off" placeholder="e.g. John Williams">
 
+        <label for="inpStudio">Studio</label>
+        <input id="inpStudio" type="text" autocomplete="off" placeholder="e.g. Pixar, A24">
+        <p class="hint">Separate names with commas. A movie matches if any one of them is
+          among its studios, and co-productions list several.</p>
+
+        <label for="selBudget">Budget</label>
+        <select id="selBudget"></select>
+
+        <label for="selRevenue">Box office</label>
+        <select id="selRevenue"></select>
+        <p class="hint">TMDB has no figure on record for plenty of movies. Setting either
+          range leaves those out, and makes finding a pick slower.</p>
+
+        <label class="toggle-row">
+          <input type="checkbox" id="chkEnglish">
+          <span>English-language only</span>
+        </label>
+        <p class="hint">Leaves out foreign-language movies. TMDB publishes nothing about
+          dubbing, so this goes by the movie's own language — it can't tell whether an
+          English dub exists.</p>
+
         <label for="selRuntime">Max length</label>
         <select id="selRuntime"></select>
       </div>

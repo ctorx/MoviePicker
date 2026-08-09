@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.17.0";
+const APP_VERSION = "2.18.0";
 
 // ---------- State (localStorage) ----------
 
@@ -54,7 +54,13 @@ const search = {
   composer: "",
   composerIds: [],
   composerNames: [],
+  studios: "",
+  studioIds: [],
+  studioNames: [],
   medium: "", // production format, one at a time (see MEDIUMS)
+  budget: "", // MONEY range key, "" = any
+  revenue: "",
+  englishOnly: false,
   maxRuntime: 150,
 };
 
@@ -203,6 +209,72 @@ function mediumOk(movie) {
   return true;
 }
 
+// ---------- Money ----------
+
+// Discover can't filter on budget or box office — there is no parameter for
+// either — so both are checked on the loaded movie instead. TMDB stores an
+// unknown figure as 0, which is why a range never matches one: a movie with no
+// budget on record isn't a movie made for under a million.
+const BUDGET_RANGES = [
+  { key: "u1", label: "Under $1M", min: 1, max: 1e6 },
+  { key: "1-10", label: "$1M – $10M", min: 1e6, max: 1e7 },
+  { key: "10-50", label: "$10M – $50M", min: 1e7, max: 5e7 },
+  { key: "50-100", label: "$50M – $100M", min: 5e7, max: 1e8 },
+  { key: "100-200", label: "$100M – $200M", min: 1e8, max: 2e8 },
+  { key: "o200", label: "Over $200M", min: 2e8, max: 0 },
+];
+
+const REVENUE_RANGES = [
+  { key: "u1", label: "Under $1M", min: 1, max: 1e6 },
+  { key: "1-10", label: "$1M – $10M", min: 1e6, max: 1e7 },
+  { key: "10-50", label: "$10M – $50M", min: 1e7, max: 5e7 },
+  { key: "50-100", label: "$50M – $100M", min: 5e7, max: 1e8 },
+  { key: "100-500", label: "$100M – $500M", min: 1e8, max: 5e8 },
+  { key: "500-1000", label: "$500M – $1B", min: 5e8, max: 1e9 },
+  { key: "o1000", label: "Over $1B", min: 1e9, max: 0 },
+];
+
+const rangeByKey = (ranges, key) => ranges.find((r) => r.key === key);
+
+const budgetRange = () => rangeByKey(BUDGET_RANGES, search.budget);
+const revenueRange = () => rangeByKey(REVENUE_RANGES, search.revenue);
+
+function inMoneyRange(value, range) {
+  if (!range) return true;
+  if (!value) return false; // 0 means "not on record", not "nothing"
+  if (range.min && value < range.min) return false;
+  if (range.max && value >= range.max) return false;
+  return true;
+}
+
+function moneyOk(m) {
+  if (!search.advanced) return true;
+  return inMoneyRange(m.budget, budgetRange()) && inMoneyRange(m.revenue, revenueRange());
+}
+
+// A range that only big films can satisfy is worth reordering the pool for.
+function moneySorted() {
+  const big = (r) => r && r.min >= 1e8;
+  return search.advanced && (big(budgetRange()) || big(revenueRange()));
+}
+
+// Pages a random pick may sample. A revenue-sorted pool keeps its matches at
+// the front, so sampling has to stay there — page 200 of 300 is past them all.
+const MONEY_SORT_PAGES = 25;
+
+// TMDB publishes nothing about dubbing — no audio tracks, no dub availability —
+// so "not foreign" can only mean the movie's own language.
+function englishOk(m) {
+  if (!search.advanced || !search.englishOnly) return true;
+  return m.original_language === "en";
+}
+
+function studioOk(m) {
+  if (!search.advanced || !search.studioIds.length) return true;
+  // Co-productions list several studios; one match is enough.
+  return (m.production_companies || []).some((c) => search.studioIds.includes(c.id));
+}
+
 function discoverParams(page) {
   const p = {
     certification_country: "US",
@@ -235,8 +307,17 @@ function discoverParams(page) {
         delete p["certification.lte"];
       }
     }
+    // A film matches if the studio is any one of its production companies,
+    // and if several were typed, any one of those counts.
+    if (search.studioIds.length) p.with_companies = search.studioIds.join("|");
+    if (search.englishOnly) p.with_original_language = "en";
     if (search.maxRuntime) p["with_runtime.lte"] = String(search.maxRuntime);
     mediumParams(p);
+
+    // Money is filtered on the loaded movie, so a demanding range would
+    // otherwise mean rejecting picks one at a time through a pool sorted by
+    // popularity. Ordering by takings puts the matches at the front instead.
+    if (moneySorted()) p.sort_by = "revenue.desc";
   }
   return p;
 }
@@ -273,10 +354,16 @@ function matchesSearch(m) {
     if (!ok) return false;
   }
   if (search.maxRuntime && m.runtime && m.runtime > search.maxRuntime) return false;
-  if (!mediumOk(m)) return false;
+  if (!mediumOk(m) || !moneyOk(m) || !englishOk(m) || !studioOk(m)) return false;
   const cast = m.credits?.cast || [];
   if (!search.actorIds.every((id) => cast.some((c) => c.id === id))) return false;
   return crewOk(m);
+}
+
+// What a discover result still has to prove: its real certification, the exact
+// crew job behind a with_crew hit, and the money figures discover can't filter.
+function verifyPick(m) {
+  return certAllowed(m) && crewOk(m) && moneyOk(m);
 }
 
 // ---------- Title lookups ----------
@@ -397,6 +484,10 @@ function searchSummary() {
     if (search.actorNames.length) bits.push("with " + search.actorNames.join(" & "));
     if (search.directorNames.length) bits.push("directed by " + search.directorNames.join(" & "));
     if (search.composerNames.length) bits.push("music by " + search.composerNames.join(" & "));
+    if (search.studioNames.length) bits.push("from " + search.studioNames.join(" or "));
+    if (budgetRange()) bits.push("budget " + budgetRange().label.toLowerCase());
+    if (revenueRange()) bits.push("box office " + revenueRange().label.toLowerCase());
+    if (search.englishOnly) bits.push("English-language");
     if (search.maxRuntime) bits.push("under " + runtimeText(search.maxRuntime));
   }
   return bits.join(" · ");
@@ -538,7 +629,7 @@ async function pickMovie() {
           const details = await fetchMovie(movie.id);
           if (token !== pickToken) return "stale";
           sessionShown.add(movie.id); // cert-rejected too, so we don't refetch them
-          if (!certAllowed(details) || !crewOk(details)) continue;
+          if (!verifyPick(details)) continue;
           servePick(details);
           return "served";
         }
@@ -563,7 +654,7 @@ async function pickMovie() {
     }
 
     // TMDB caps discover at 500 pages; stay well inside it.
-    const totalPages = Math.min(first.total_pages, 300);
+    const totalPages = Math.min(first.total_pages, moneySorted() ? MONEY_SORT_PAGES : 300);
     const tried = new Set();
 
     for (let attempt = 0; attempt < 10; attempt++) {
@@ -583,7 +674,7 @@ async function pickMovie() {
       for (const movie of candidates.slice(0, 5)) {
         const details = await fetchMovie(movie.id);
         if (token !== pickToken) return;
-        if (!certAllowed(details) || !crewOk(details)) continue;
+        if (!verifyPick(details)) continue;
         servePick(details);
         return;
       }
@@ -896,6 +987,22 @@ function renderMediumChips() {
   }
 }
 
+function buildMoneyOptions(id, ranges, current) {
+  const sel = $(id);
+  sel.innerHTML = "";
+  const any = document.createElement("option");
+  any.value = "";
+  any.textContent = "Any";
+  sel.appendChild(any);
+  for (const r of ranges) {
+    const o = document.createElement("option");
+    o.value = r.key;
+    o.textContent = r.label;
+    sel.appendChild(o);
+  }
+  sel.value = current;
+}
+
 async function renderGenreChips() {
   const box = $("genreChips");
   try {
@@ -931,6 +1038,10 @@ function resetSearch() {
   search.actors = ""; search.actorIds = []; search.actorNames = [];
   search.director = ""; search.directorIds = []; search.directorNames = [];
   search.composer = ""; search.composerIds = []; search.composerNames = [];
+  search.studios = ""; search.studioIds = []; search.studioNames = [];
+  search.budget = "";
+  search.revenue = "";
+  search.englishOnly = false;
   search.maxRuntime = 150;
   // Age and year outlive the session, so clearing them has to stick even if
   // the user closes the search screen without applying.
@@ -950,7 +1061,11 @@ function fillSearchForm() {
   $("inpActors").value = search.actors;
   $("inpDirector").value = search.director;
   $("inpComposer").value = search.composer;
+  $("inpStudio").value = search.studios;
+  $("chkEnglish").checked = search.englishOnly;
   buildRuntimeOptions();
+  buildMoneyOptions("selBudget", BUDGET_RANGES, search.budget);
+  buildMoneyOptions("selRevenue", REVENUE_RANGES, search.revenue);
   renderGenreMode();
   if (search.advanced) {
     renderGenreChips();
@@ -977,6 +1092,27 @@ $("chkAdvanced").addEventListener("change", () => {
     renderMediumChips();
   }
 });
+
+async function resolveCompanies(namesText) {
+  const names = namesText.split(",").map((s) => s.trim()).filter(Boolean);
+  const ids = [];
+  const resolved = [];
+  const missing = [];
+  for (const name of names) {
+    const r = await tmdbFetch("/search/company", { query: name });
+    const hits = r.results || [];
+    // Company search is fuzzy and studio names repeat across subsidiaries, so
+    // an exact name wins over TMDB's own ordering.
+    const hit = hits.find((c) => c.name.toLowerCase() === name.toLowerCase()) || hits[0];
+    if (hit) {
+      ids.push(hit.id);
+      resolved.push(hit.name);
+    } else {
+      missing.push(name);
+    }
+  }
+  return { ids, resolved, missing };
+}
 
 async function resolveActors(namesText) {
   const names = namesText.split(",").map((s) => s.trim()).filter(Boolean);
@@ -1028,11 +1164,18 @@ $("btnApplySearch").addEventListener("click", async () => {
       search.actors = $("inpActors").value;
       search.director = $("inpDirector").value;
       search.composer = $("inpComposer").value;
+      search.studios = $("inpStudio").value;
+      search.budget = $("selBudget").value;
+      search.revenue = $("selRevenue").value;
+      search.englishOnly = $("chkEnglish").checked;
       search.maxRuntime = $("selRuntime").value ? parseInt($("selRuntime").value, 10) : 0;
       const actors = await resolveActors(search.actors);
       const directors = await resolveActors(search.director);
       const composers = await resolveActors(search.composer);
-      const missing = [...actors.missing, ...directors.missing, ...composers.missing];
+      const studios = await resolveCompanies(search.studios);
+      const missing = [
+        ...actors.missing, ...directors.missing, ...composers.missing, ...studios.missing,
+      ];
       if (missing.length) {
         errEl.textContent = "Couldn't find: " + missing.join(", ");
         errEl.hidden = false;
@@ -1044,6 +1187,8 @@ $("btnApplySearch").addEventListener("click", async () => {
       search.directorNames = directors.resolved;
       search.composerIds = composers.ids;
       search.composerNames = composers.resolved;
+      search.studioIds = studios.ids;
+      search.studioNames = studios.resolved;
     } else {
       search.actorIds = [];
       search.actorNames = [];
@@ -1051,6 +1196,8 @@ $("btnApplySearch").addEventListener("click", async () => {
       search.directorNames = [];
       search.composerIds = [];
       search.composerNames = [];
+      search.studioIds = [];
+      search.studioNames = [];
     }
     sessionShown.clear();
     announceCount = true;
@@ -1080,13 +1227,22 @@ function openInfo() {
   const crew = m.credits?.crew || [];
   const crewPeople = (job) => crew.filter((c) => c.job === job);
 
-  // Tapping a name searches that person's whole filmography (all time, age 21).
+  // Tapping a name searches its whole catalogue — a person's filmography or a
+  // studio's output (all time, age 21).
   const personLink = (kind) => (p) => {
     const s = document.createElement("span");
     s.className = "person-link";
     s.textContent = p.name;
-    s.addEventListener("click", () => forcePersonSearch(kind, p.id, p.name));
+    s.addEventListener("click", () => forceSearchFor(kind, p.id, p.name));
     return s;
+  };
+  const linkedNames = (people, kind) => {
+    const frag = document.createElement("span");
+    people.forEach((p, i) => {
+      if (i) frag.append(", ");
+      frag.appendChild(personLink(kind)(p));
+    });
+    return frag;
   };
   const nameList = (el, prefix, people, kind) => {
     el.textContent = "";
@@ -1110,20 +1266,13 @@ function openInfo() {
   )];
   if (writers.length) rows.push(["Written by", writers.slice(0, 4).join(", ")]);
   const composers = crewPeople("Original Music Composer");
-  if (composers.length) {
-    const frag = document.createElement("span");
-    composers.forEach((p, i) => {
-      if (i) frag.append(", ");
-      frag.appendChild(personLink("composer")(p));
-    });
-    rows.push(["Music", frag]);
-  }
+  if (composers.length) rows.push(["Music", linkedNames(composers, "composer")]);
   const countries = (m.production_countries || []).map((c) => c.name);
   if (countries.length) rows.push(["Country", countries.join(", ")]);
   if (m.budget) rows.push(["Budget", money(m.budget)]);
   if (m.revenue) rows.push(["Box office", money(m.revenue)]);
-  const studios = (m.production_companies || []).slice(0, 3).map((c) => c.name);
-  if (studios.length) rows.push(["Studio", studios.join(", ")]);
+  const studios = (m.production_companies || []).slice(0, 3);
+  if (studios.length) rows.push(["Studio", linkedNames(studios, "studio")]);
 
   const extra = $("infoExtra");
   extra.textContent = "";
@@ -1150,22 +1299,28 @@ function openInfo() {
   navPush("info");
 }
 
-// A person tap in the info screen becomes a fresh advanced search for just
-// that person: all time (blank year), blank age (21), no other filters.
-function forcePersonSearch(kind, id, name) {
+// A name tap in the info screen becomes a fresh advanced search for just that
+// person or studio: all time (blank year), blank age (21), no other filters.
+function forceSearchFor(kind, id, name) {
   search.advanced = true;
   search.title = "";
   search.genres.clear();
   search.genreMode = "all";
   search.medium = "";
+  search.budget = "";
+  search.revenue = "";
+  search.englishOnly = false;
   search.maxRuntime = 0;
   search.actors = ""; search.actorIds = []; search.actorNames = [];
   search.director = ""; search.directorIds = []; search.directorNames = [];
   search.composer = ""; search.composerIds = []; search.composerNames = [];
+  search.studios = ""; search.studioIds = []; search.studioNames = [];
   if (kind === "actor") {
     search.actors = name; search.actorIds = [id]; search.actorNames = [name];
   } else if (kind === "director") {
     search.director = name; search.directorIds = [id]; search.directorNames = [name];
+  } else if (kind === "studio") {
+    search.studios = name; search.studioIds = [id]; search.studioNames = [name];
   } else {
     search.composer = name; search.composerIds = [id]; search.composerNames = [name];
   }
