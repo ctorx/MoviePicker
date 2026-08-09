@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.24.1";
+const APP_VERSION = "2.25.0";
 
 // ---------- State (localStorage) ----------
 
@@ -46,15 +46,6 @@ function normalizeLists() {
   for (const id of Object.keys(lists.watchlist)) {
     if (lists.seen[id] || lists.blocked[id]) {
       delete lists.watchlist[id];
-      changed = true;
-    }
-  }
-  // Anything saved before entries were timestamped gets one now. Without it
-  // there's nothing to hold against, so every one of them counts as settled
-  // and comes back around straight away.
-  for (const entry of Object.values(lists.watchlist)) {
-    if (!entry.added) {
-      entry.added = Date.now();
       changed = true;
     }
   }
@@ -583,10 +574,10 @@ async function pickFromQuery(token) {
     }
   }
 
-  // Seen and blocked are settled and stay out of a query's results too. The
-  // watchlist doesn't: saving a movie shouldn't make it unfindable by name.
-  const settled = settledIds();
-  const usable = queryPool.movies.filter((m) => m.poster_path && !settled.has(m.id));
+  // Saved, seen or blocked, it's spoken for and stays out of the picks — a
+  // query's results included.
+  const excluded = excludedIds();
+  const usable = queryPool.movies.filter((m) => m.poster_path && !excluded.has(m.id));
   if (!usable.length) {
     showPickError(
       'No movies found for "' + search.query + '". Check the spelling, or try fewer words.'
@@ -609,7 +600,7 @@ async function pickFromQuery(token) {
     if (token !== pickToken) return;
     sessionShown.add(movie.id); // rejected ones too, so we don't refetch them
     if (!matchesSearch(details)) continue;
-    servePick(details);
+    renderMovie(details);
     return;
   }
   showPickError("You've been through every match for this search. Try widening it.");
@@ -658,13 +649,6 @@ function excludedIds() {
   );
 }
 
-// Done with, wherever a pick comes from.
-function settledIds() {
-  return new Set(
-    [...Object.keys(lists.seen), ...Object.keys(lists.blocked)].map(Number)
-  );
-}
-
 let lastShownId = null; // keeps a literal skip from re-serving the same movie immediately
 const sessionShown = new Set(); // everything shown since the last search change
 
@@ -679,65 +663,6 @@ function shuffle(arr) {
 let pickToken = 0; // ignore stale responses when the user re-searches mid-load
 let announceCount = false; // show a result-count toast after the next fetch (new searches only)
 
-// The watchlist is excluded from discover results, so every WATCHLIST_EVERY-th
-// pick hands one back deliberately: a random saved movie instead of a new one.
-// It still has to satisfy the current search, so a saved movie only turns up
-// where it would have been a legitimate result anyway.
-const WATCHLIST_EVERY = 20;
-const WATCHLIST_TRIES = 5; // details fetches spent looking for a qualifying one
-// A movie saved moments ago coming straight back around reads as a bug, so an
-// entry has to have sat on the list for a day before it's up for injection.
-const WATCHLIST_HOLD_MS = 24 * 60 * 60 * 1000;
-let picksServed = 0;
-
-function servePick(details) {
-  picksServed++;
-  renderMovie(details);
-}
-
-// During a title lookup a saved movie has to be one of the movies that lookup
-// found — TMDB's own answer to "does this match", typos and all.
-function eligibleForInjection(id) {
-  if (!search.query) return true;
-  return queryPool.key === queryPoolKey() && queryPool.movies.some((m) => m.id === id);
-}
-
-// Entries saved before this was recorded have no timestamp; those have plainly
-// been sitting there a while, so they count as settled.
-function settledOnWatchlist(entry) {
-  return Date.now() - (entry.added || 0) >= WATCHLIST_HOLD_MS;
-}
-
-// "rendered" | "stale" (a newer pick started) | "none" (fall back to discover)
-async function tryWatchlistPick(token) {
-  // The stored year is enough to drop the obvious misses before spending a
-  // request on them; everything else needs the full movie.
-  const ids = shuffle(
-    Object.entries(lists.watchlist)
-      .filter(([id, e]) =>
-        Number(id) !== lastShownId &&
-        !lists.seen[id] && !lists.blocked[id] &&
-        settledOnWatchlist(e) &&
-        eligibleForInjection(Number(id)) &&
-        (!settings.fromYear || parseInt(e.year, 10) >= settings.fromYear))
-      .map(([id]) => Number(id))
-  );
-  for (const id of ids.slice(0, WATCHLIST_TRIES)) {
-    let details;
-    try {
-      details = await fetchMovie(id);
-    } catch {
-      continue; // dead id or a network blip — a normal pick still gets a movie
-    }
-    if (token !== pickToken) return "stale";
-    if (!matchesSearch(details)) continue;
-    servePick(details);
-    showToast("One from your watchlist", null, 2500);
-    return "rendered";
-  }
-  return "none";
-}
-
 async function pickMovie() {
   const token = ++pickToken;
   if (!$("card").hidden) {
@@ -746,15 +671,6 @@ async function pickMovie() {
     showPickState("loading");
   }
   try {
-    // Not on the first pick of a new search — that one belongs to the search,
-    // and owns the result-count toast.
-    if (!announceCount &&
-        (picksServed + 1) % WATCHLIST_EVERY === 0 &&
-        Object.keys(lists.watchlist).length) {
-      const outcome = await tryWatchlistPick(token);
-      if (outcome !== "none") return;
-    }
-
     if (search.query) return await pickFromQuery(token);
 
     const excluded = excludedIds();
@@ -795,7 +711,7 @@ async function pickMovie() {
           if (token !== pickToken) return "stale";
           sessionShown.add(movie.id); // cert-rejected too, so we don't refetch them
           if (!verifyPick(details)) continue;
-          servePick(details);
+          renderMovie(details);
           return "served";
         }
         return "none";
@@ -840,7 +756,7 @@ async function pickMovie() {
         const details = await fetchMovie(movie.id);
         if (token !== pickToken) return;
         if (!verifyPick(details)) continue;
-        servePick(details);
+        renderMovie(details);
         return;
       }
     }
@@ -969,8 +885,7 @@ function listEntry(m) {
   };
 }
 
-// Watchlist entries record when they were saved, so a movie just added can't
-// come straight back around in the rotation.
+// The watchlist records when each movie was saved.
 function addToWatchlist(m) {
   lists.watchlist[m.id] = { ...listEntry(m), added: Date.now() };
 }
