@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.15.0";
+const APP_VERSION = "2.16.0";
 
 // ---------- State (localStorage) ----------
 
@@ -54,6 +54,7 @@ const search = {
   composer: "",
   composerIds: [],
   composerNames: [],
+  medium: "", // production format, one at a time (see MEDIUMS)
   maxRuntime: 150,
 };
 
@@ -85,6 +86,13 @@ function tmdbFetch(path, params = {}) {
   });
 }
 
+// Everything a pick needs to be verified and rendered, in one request.
+function fetchMovie(id) {
+  return tmdbFetch("/movie/" + id, {
+    append_to_response: "credits,videos,release_dates,keywords",
+  });
+}
+
 // US certifications allowed for the youngest viewer's age.
 const CERT_RANK = { G: 0, PG: 1, "PG-13": 2, R: 3, "NC-17": 4 };
 
@@ -108,6 +116,80 @@ function certAllowed(m) {
   const cert = certOf(m);
   const max = CERT_RANK[certForAge(effectiveAge())];
   return cert in CERT_RANK && CERT_RANK[cert] <= max;
+}
+
+// ---------- Production format ----------
+
+// TMDB has no field for how a movie was made, so every format except live
+// action rides on its keyword tags. Keyword ids aren't stable enough to hard
+// code, so the names below are resolved against TMDB at runtime and a chip
+// only appears once its keywords come back — if TMDB doesn't know a name, the
+// option quietly isn't offered.
+//
+// Coverage is contributor-supplied and uneven: a format finds the movies TMDB
+// has tagged, not every movie that qualifies.
+const MEDIUMS = [
+  // Live action is the one that doesn't need keywords: it's "not animated",
+  // and without_genres is its own parameter, so it ANDs cleanly with the rest.
+  { key: "live", label: "Live action", withoutGenre: 16 },
+  { key: "stopmotion", label: "Stop motion", keywords: ["stop motion", "claymation"] },
+  { key: "mixed", label: "Mixed media", keywords: ["live action and animation"] },
+  { key: "handdrawn", label: "Hand-drawn", keywords: ["traditional animation", "hand drawn animation"] },
+  { key: "cgi", label: "CGI", keywords: ["computer animation", "cgi animation"] },
+  { key: "anime", label: "Anime", keywords: ["anime"] },
+  { key: "puppets", label: "Puppets", keywords: ["puppet", "puppetry"] },
+  { key: "silent", label: "Silent", keywords: ["silent film"] },
+  { key: "bw", label: "Black & white", keywords: ["black and white"] },
+];
+
+const mediumByKey = (key) => MEDIUMS.find((m) => m.key === key);
+
+// Resolved once per session. Exact name matches only — TMDB's keyword search
+// is fuzzy, and a near miss would put a chip on screen that filters to junk.
+let mediumsReady = null;
+
+function resolveKeyword(name) {
+  return tmdbFetch("/search/keyword", { query: name })
+    .then((r) => (r.results || []).filter((k) => k.name.toLowerCase() === name).map((k) => k.id))
+    .catch(() => []); // one dud name shouldn't cost the rest of the list
+}
+
+function ensureMediums() {
+  if (!mediumsReady) {
+    mediumsReady = Promise.all(
+      MEDIUMS.filter((m) => m.keywords).map(async (m) => {
+        const found = await Promise.all(m.keywords.map(resolveKeyword));
+        m.keywordIds = [...new Set(found.flat())];
+      })
+    ).then(() => {
+      const available = MEDIUMS.filter((m) => !m.keywords || m.keywordIds.length);
+      // Nothing at all resolving means the network was down, not that TMDB
+      // dropped every keyword — drop the cache so the next open retries.
+      if (available.length <= 1) mediumsReady = null;
+      return available;
+    });
+  }
+  return mediumsReady;
+}
+
+function mediumParams(p) {
+  const m = mediumByKey(search.medium);
+  if (!m) return;
+  if (m.withoutGenre) p.without_genres = String(m.withoutGenre);
+  if (m.keywordIds?.length) p.with_keywords = m.keywordIds.join("|"); // any of them
+}
+
+// The keyword tags a discover search matched on, re-checked against a loaded
+// movie (for title results and injected favorites, which skip discover).
+function mediumOk(movie) {
+  const m = mediumByKey(search.medium);
+  if (!m) return true;
+  if (m.withoutGenre && (movie.genres || []).some((g) => g.id === m.withoutGenre)) return false;
+  if (m.keywordIds?.length) {
+    const tags = (movie.keywords?.keywords || []).map((k) => k.id);
+    if (!m.keywordIds.some((id) => tags.includes(id))) return false;
+  }
+  return true;
 }
 
 function discoverParams(page) {
@@ -143,6 +225,7 @@ function discoverParams(page) {
       }
     }
     if (search.maxRuntime) p["with_runtime.lte"] = String(search.maxRuntime);
+    mediumParams(p);
   }
   return p;
 }
@@ -179,6 +262,7 @@ function matchesSearch(m) {
     if (!ok) return false;
   }
   if (search.maxRuntime && m.runtime && m.runtime > search.maxRuntime) return false;
+  if (!mediumOk(m)) return false;
   const cast = m.credits?.cast || [];
   if (!search.actorIds.every((id) => cast.some((c) => c.id === id))) return false;
   return crewOk(m);
@@ -278,9 +362,7 @@ async function pickFromTitle(token) {
   }
 
   for (const movie of fresh) {
-    const details = await tmdbFetch("/movie/" + movie.id, {
-      append_to_response: "credits,videos,release_dates",
-    });
+    const details = await fetchMovie(movie.id);
     if (token !== pickToken) return;
     sessionShown.add(movie.id); // rejected ones too, so we don't refetch them
     if (!matchesSearch(details)) continue;
@@ -300,6 +382,7 @@ function searchSummary() {
       const names = genreCache.filter((g) => search.genres.has(g.id)).map((g) => g.name);
       bits.push(names.join(search.genreMode === "any" ? " or " : " + "));
     }
+    if (search.medium) bits.push(mediumByKey(search.medium).label.toLowerCase());
     if (search.actorNames.length) bits.push("with " + search.actorNames.join(" & "));
     if (search.directorNames.length) bits.push("directed by " + search.directorNames.join(" & "));
     if (search.composerNames.length) bits.push("music by " + search.composerNames.join(" & "));
@@ -375,9 +458,7 @@ async function tryFavoritePick(token) {
   for (const id of ids.slice(0, FAVORITE_TRIES)) {
     let details;
     try {
-      details = await tmdbFetch("/movie/" + id, {
-        append_to_response: "credits,videos,release_dates",
-      });
+      details = await fetchMovie(id);
     } catch {
       continue; // dead id or a network blip — a normal pick still gets a movie
     }
@@ -443,9 +524,7 @@ async function pickMovie() {
         for (const movie of candidates) {
           if (checked.has(movie.id)) continue;
           checked.add(movie.id);
-          const details = await tmdbFetch("/movie/" + movie.id, {
-            append_to_response: "credits,videos,release_dates",
-          });
+          const details = await fetchMovie(movie.id);
           if (token !== pickToken) return "stale";
           sessionShown.add(movie.id); // cert-rejected too, so we don't refetch them
           if (!certAllowed(details) || !crewOk(details)) continue;
@@ -491,9 +570,7 @@ async function pickMovie() {
 
       // Verify the real certification before accepting a candidate (see certAllowed).
       for (const movie of candidates.slice(0, 5)) {
-        const details = await tmdbFetch("/movie/" + movie.id, {
-          append_to_response: "credits,videos,release_dates",
-        });
+        const details = await fetchMovie(movie.id);
         if (token !== pickToken) return;
         if (!certAllowed(details) || !crewOk(details)) continue;
         servePick(details);
@@ -513,9 +590,7 @@ async function openMovieById(id) {
   showPickState("loading");
   navHome();
   try {
-    const details = await tmdbFetch("/movie/" + id, {
-      append_to_response: "credits,videos,release_dates",
-    });
+    const details = await fetchMovie(id);
     if (token !== pickToken) return;
     renderMovie(details);
   } catch (err) {
@@ -789,6 +864,32 @@ $("genreMode").addEventListener("click", (e) => {
   renderGenreMode();
 });
 
+// One format at a time: each maps to a different discover parameter, and
+// TMDB can't OR across parameters, so a multi-select would quietly turn into
+// an AND and return nothing. Tapping the active chip clears it.
+async function renderMediumChips() {
+  const box = $("mediumChips");
+  try {
+    const available = await ensureMediums();
+    box.innerHTML = "";
+    for (const m of available) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "chip";
+      chip.textContent = m.label;
+      chip.classList.toggle("active", search.medium === m.key);
+      chip.addEventListener("click", () => {
+        search.medium = search.medium === m.key ? "" : m.key;
+        for (const other of box.querySelectorAll(".chip")) other.classList.remove("active");
+        chip.classList.toggle("active", search.medium === m.key);
+      });
+      box.appendChild(chip);
+    }
+  } catch {
+    box.innerHTML = '<p class="hint">Couldn\'t load formats. Check your connection.</p>';
+  }
+}
+
 async function renderGenreChips() {
   const box = $("genreChips");
   try {
@@ -823,7 +924,10 @@ function openSearch() {
   $("inpComposer").value = search.composer;
   buildRuntimeOptions();
   renderGenreMode();
-  if (search.advanced) renderGenreChips();
+  if (search.advanced) {
+    renderGenreChips();
+    renderMediumChips();
+  }
   updateCertHint();
   $("searchError").hidden = true;
   navPush("search");
@@ -835,7 +939,10 @@ $("inpAge").addEventListener("input", updateCertHint);
 
 $("chkAdvanced").addEventListener("change", () => {
   $("advancedBox").hidden = !$("chkAdvanced").checked;
-  if ($("chkAdvanced").checked) renderGenreChips();
+  if ($("chkAdvanced").checked) {
+    renderGenreChips();
+    renderMediumChips();
+  }
 });
 
 async function resolveActors(namesText) {
@@ -1017,6 +1124,7 @@ function forcePersonSearch(kind, id, name) {
   search.title = "";
   search.genres.clear();
   search.genreMode = "all";
+  search.medium = "";
   search.maxRuntime = 0;
   search.actors = ""; search.actorIds = []; search.actorNames = [];
   search.director = ""; search.directorIds = []; search.directorNames = [];
