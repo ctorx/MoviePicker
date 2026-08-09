@@ -575,7 +575,10 @@ button:active { transform: scale(0.98); }
   -webkit-tap-highlight-color: transparent;
 }
 .stars-lg .star svg { width: 40px; height: 40px; }
-.stars-lg .star:active { transform: scale(0.88); }
+/* Pressing must not move the target: shrinking it slides the edge out from
+   under a thumb that's already on it. Feedback comes from colour instead. */
+.stars-lg .star:active { transform: none; }
+.stars-lg .star:active svg { opacity: 0.55; }
 
 /* Sits above the toast so a pick loading behind it can't cover the sheet. */
 .sheet-overlay {

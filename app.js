@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.23.0";
+const APP_VERSION = "2.24.0";
 
 // ---------- State (localStorage) ----------
 
@@ -39,17 +39,26 @@ function normalizeLists() {
   for (const name of ["watchlist", "seen", "blocked"]) {
     if (!lists[name] || typeof lists[name] !== "object") lists[name] = {};
   }
+  // Marking a movie seen only started taking it off the watchlist recently,
+  // so older data has movies on both — and the watchlist is what feeds them
+  // back into the rotation.
+  let changed = false;
+  for (const id of Object.keys(lists.watchlist)) {
+    if (lists.seen[id] || lists.blocked[id]) {
+      delete lists.watchlist[id];
+      changed = true;
+    }
+  }
   // Anything saved before entries were timestamped gets one now. Without it
   // there's nothing to hold against, so every one of them counts as settled
   // and comes back around straight away.
-  let stamped = false;
   for (const entry of Object.values(lists.watchlist)) {
     if (!entry.added) {
       entry.added = Date.now();
-      stamped = true;
+      changed = true;
     }
   }
-  if (stamped) saveLists();
+  if (changed) saveLists();
 }
 
 function saveSettings() { store.save("mp_settings", settings); }
@@ -292,14 +301,19 @@ function studioOk(m) {
   return (m.production_companies || []).some((c) => search.studioIds.includes(c.id));
 }
 
+// Enough votes for the score to mean something, and a floor that keeps picks
+// watchable. Discover applies these; a subject search applies them itself.
+const MIN_VOTES = 200;
+const MIN_SCORE = 6;
+
 function discoverParams(page) {
   const p = {
     certification_country: "US",
     "certification.lte": certForAge(effectiveAge()),
     sort_by: "popularity.desc",
     include_adult: "false",
-    "vote_count.gte": "200",   // enough votes that the score means something
-    "vote_average.gte": "6",   // quality floor so picks are watchable
+    "vote_count.gte": String(MIN_VOTES), // enough votes that the score means something
+    "vote_average.gte": String(MIN_SCORE), // quality floor so picks are watchable
     page: String(page),
   };
   if (settings.fromYear) p["primary_release_date.gte"] = settings.fromYear + "-01-01";
@@ -433,29 +447,6 @@ function byMatchThenRelease(query) {
 // full run of obscure titles that happen to contain the word — search
 // "zombie" and 28 Days Later lands past forty of them, which reads as a search
 // that never left the titles at all.
-// An exact title outranks a partial one, which outranks a description mention,
-// which outranks a tag — but only as a multiplier on popularity, never as an
-// absolute. Putting exact titles first outright reads well for "Zombieland"
-// and terribly for a common word: a dozen forgotten movies are named exactly
-// "Heist" or "Vampires", and every one of them would come before the heist and
-// vampire movies actually being asked for. Title mode is where an exact name
-// wins outright; this mode is asking about a subject.
-const MATCH_WEIGHT = { exact: 5, title: 3, overview: 1.5, tag: 1 };
-
-function byRelevance(query) {
-  const term = query.toLowerCase();
-  const score = (m) => {
-    const rank = titleRank(m.title, query);
-    const where = rank === 0
-      ? "exact"
-      : rank <= 2
-        ? "title"
-        : (m.overview || "").toLowerCase().includes(term) ? "overview" : "tag";
-    return (m.popularity || 0) * MATCH_WEIGHT[where];
-  };
-  return (a, b) => score(b) - score(a);
-}
-
 // Sorting needs the whole result set, so it's fetched once per query and kept:
 // stepping through a series costs one request per movie, not five. In broad
 // mode the filters shape the tag half of the pool, so they belong in the key.
@@ -561,8 +552,20 @@ async function ensureQueryPool(token) {
     }
   }
 
-  movies.sort(broadSearch() ? byRelevance(search.query) : byMatchThenRelease(search.query));
-  queryPool = { key, movies, total: broadSearch() ? movies.length : first.total_results };
+  let pool = movies;
+  if (broadSearch()) {
+    // Title results carry no quality floor of their own, so a subject search
+    // would otherwise mix Interstellar with forty straight-to-video films
+    // that happen to have the word in the title. Order doesn't matter here —
+    // picks are shuffled — but which movies are in the pool does.
+    const worth = movies.filter(
+      (m) => (m.vote_count || 0) >= MIN_VOTES && (m.vote_average || 0) >= MIN_SCORE
+    );
+    if (worth.length) pool = worth;
+  } else {
+    pool.sort(byMatchThenRelease(search.query));
+  }
+  queryPool = { key, movies: pool, total: broadSearch() ? pool.length : first.total_results };
   return true;
 }
 
@@ -580,9 +583,10 @@ async function pickFromQuery(token) {
     }
   }
 
-  // Nothing is held back from a title lookup — a movie already sitting in a
-  // list can still be found by name.
-  const usable = queryPool.movies.filter((m) => m.poster_path);
+  // Seen and blocked are settled and stay out of a query's results too. The
+  // watchlist doesn't: saving a movie shouldn't make it unfindable by name.
+  const settled = settledIds();
+  const usable = queryPool.movies.filter((m) => m.poster_path && !settled.has(m.id));
   if (!usable.length) {
     showPickError(
       'No movies found for "' + search.query + '". Check the spelling, or try fewer words.'
@@ -591,10 +595,14 @@ async function pickFromQuery(token) {
   }
   let fresh = usable.filter((m) => !sessionShown.has(m.id));
   if (!fresh.length) {
-    // Been through them all this session — start the series over.
+    // Been through them all this session — start over.
     sessionShown.clear();
     fresh = usable.filter((m) => m.id !== lastShownId);
   }
+  // A title walks its series in release order. A subject has no order to walk,
+  // so it's shuffled — the same word shouldn't hand back the same movie first
+  // every time it's searched.
+  if (broadSearch()) shuffle(fresh);
 
   for (const movie of fresh) {
     const details = await fetchMovie(movie.id);
@@ -650,6 +658,13 @@ function excludedIds() {
   );
 }
 
+// Done with, wherever a pick comes from.
+function settledIds() {
+  return new Set(
+    [...Object.keys(lists.seen), ...Object.keys(lists.blocked)].map(Number)
+  );
+}
+
 let lastShownId = null; // keeps a literal skip from re-serving the same movie immediately
 const sessionShown = new Set(); // everything shown since the last search change
 
@@ -701,6 +716,7 @@ async function tryWatchlistPick(token) {
     Object.entries(lists.watchlist)
       .filter(([id, e]) =>
         Number(id) !== lastShownId &&
+        !lists.seen[id] && !lists.blocked[id] &&
         settledOnWatchlist(e) &&
         eligibleForInjection(Number(id)) &&
         (!settings.fromYear || parseInt(e.year, 10) >= settings.fromYear))
@@ -1776,7 +1792,14 @@ function renderStars(box, rating, onPick) {
     if (onPick) {
       star.type = "button";
       star.setAttribute("aria-label", i === 1 ? "1 star" : i + " stars");
-      star.addEventListener("click", () => onPick(i));
+      // On the finger this takes the rating the moment the star is touched.
+      // A click needs the touch to land and lift on the same element, and a
+      // thumb rolls a few pixels — on a target this size that was landing
+      // outside often enough to need a second go.
+      star.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        onPick(i);
+      });
     }
     box.appendChild(star);
   }
@@ -1785,6 +1808,7 @@ function renderStars(box, rating, onPick) {
 let ratingTarget = null; // { id, entry } being rated
 let ratingUnder = ""; // hash of the screen the sheet opened over
 let ratingAfter = null; // held until the sheet closes — see the swipe handler
+let ratingPicked = false; // a second pointer event mustn't navigate back twice
 
 // However the sheet is dismissed — a star, Skip, or the back button — whatever
 // was waiting on it runs now.
@@ -1797,10 +1821,13 @@ function closeRating() {
 
 function openRating(id, entry, after) {
   ratingTarget = { id: String(id), entry };
+  ratingPicked = false;
   ratingAfter = after || null;
   ratingUnder = location.hash.replace(/^#/, "");
   $("rateMovie").textContent = entry.title + (entry.year ? " (" + entry.year + ")" : "");
   renderStars($("rateStars"), entry.rating || 0, (n) => {
+    if (ratingPicked || !ratingTarget) return;
+    ratingPicked = true;
     const seen = lists.seen[ratingTarget.id];
     if (seen) {
       seen.rating = n;
