@@ -88,10 +88,17 @@
       </button>
     </div>
     <div class="modal-body">
-      <label for="inpTitle">Looking for a <strong>specific movie</strong>?</label>
-      <input id="inpTitle" type="text" autocomplete="off" placeholder="blank = surprise me">
-      <p class="hint">Type a title to go straight to it. Closest matches first, then oldest
-        to newest — so "Harry Potter" walks the series in order. Everything below still applies.</p>
+      <div class="label-row">
+        <label for="inpQuery">Looking for something <strong>specific</strong>?</label>
+        <div id="queryMode" class="seg" role="group" aria-label="What to search">
+          <button type="button" class="seg-btn" data-qmode="title">Title</button>
+          <button type="button" class="seg-btn" data-qmode="anything">Anything</button>
+        </div>
+      </div>
+      <input id="inpQuery" type="text" autocomplete="off" placeholder="blank = surprise me">
+      <p class="hint" id="queryModeHint"></p>
+      <p class="hint">TMDB can only search titles, so "Anything" reaches the rest through its
+        topic tags. Everything below still applies either way.</p>
 
       <label for="inpAge">How old is the <strong>youngest</strong> person watching?</label>
       <input id="inpAge" type="number" min="1" max="120" inputmode="numeric" placeholder="blank = 21">

@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.21.0";
+const APP_VERSION = "2.22.0";
 
 // ---------- State (localStorage) ----------
 
@@ -46,7 +46,8 @@ function saveLists() { store.save("mp_lists", lists); }
 
 // Session-only search filters (advanced is off by default on every start).
 const search = {
-  title: "", // a name to look up; switches the pool to /search/movie
+  query: "", // a title or word to look up; switches the pool off discover
+  queryMode: "title", // "title", or "anything" for titles plus topic tags
   advanced: false,
   genres: new Set(),
   genreMode: "all", // "all" = must have every selected genre, "any" = at least one
@@ -371,11 +372,19 @@ function verifyPick(m) {
   return certAllowed(m) && crewOk(m) && moneyOk(m);
 }
 
-// ---------- Title lookups ----------
+// ---------- Query lookups ----------
 
-// Discover has no query parameter, so a title goes through /search/movie and
-// is ordered here instead: closest matches first, and within equally close
+// Discover has no query parameter, so a typed query goes through /search/movie
+// and is ordered here instead: closest matches first, and within equally close
 // matches oldest to newest, so a series plays in the order it was released.
+//
+// "Anything" mode widens that. TMDB's search covers titles only — there is no
+// endpoint that searches descriptions — so the width comes from its keyword
+// tags, which is where "movies about X" actually lives in TMDB's data. The
+// description still counts for ordering: a movie whose overview mentions the
+// word ranks above one that only carries the tag.
+
+const broadSearch = () => !!search.query && search.queryMode === "anything";
 
 function titleWords(s) {
   return s.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, " ").trim().split(" ");
@@ -408,40 +417,100 @@ function byMatchThenRelease(query) {
   };
 }
 
-// Sorting by date needs the whole result set, so it's fetched once per query
-// and kept: stepping through a series costs one request per movie, not five.
-let titlePool = { query: null, movies: [], total: 0 };
+// Title match first, then a mention in the description, then tag-only matches;
+// most popular first inside each of those, since a broad query has no series
+// order to follow.
+function byBreadthThenPopularity(query) {
+  const term = query.toLowerCase();
+  const tier = (m) => {
+    if (titleRank(m.title, query) <= 2) return 0;
+    if ((m.overview || "").toLowerCase().includes(term)) return 1;
+    return 2;
+  };
+  return (a, b) => (tier(a) - tier(b)) || (b.popularity || 0) - (a.popularity || 0);
+}
 
-async function ensureTitlePool(token) {
-  if (titlePool.query === search.title) return true;
-  const fetchPage = (page) =>
+// Sorting needs the whole result set, so it's fetched once per query and kept:
+// stepping through a series costs one request per movie, not five. In broad
+// mode the filters shape the tag half of the pool, so they belong in the key.
+function queryPoolKey() {
+  return broadSearch()
+    ? "any:" + search.query + ":" + JSON.stringify(discoverParams(1))
+    : "title:" + search.query;
+}
+
+let queryPool = { key: null, movies: [], total: 0 };
+
+// The tags TMDB knows for this word — "zombie", "time travel", "heist". Only
+// names containing the term, so a fuzzy hit can't drag in unrelated movies.
+async function topicKeywordIds(term) {
+  try {
+    const r = await tmdbFetch("/search/keyword", { query: term });
+    const wanted = term.toLowerCase();
+    return (r.results || [])
+      .filter((k) => k.name.toLowerCase().includes(wanted))
+      .slice(0, 5)
+      .map((k) => k.id);
+  } catch {
+    return []; // titles alone still make a pool
+  }
+}
+
+async function ensureQueryPool(token) {
+  const key = queryPoolKey();
+  if (queryPool.key === key) return true;
+
+  const searchPage = (page) =>
     tmdbFetch("/search/movie", {
-      query: search.title,
+      query: search.query,
       include_adult: "false",
       page: String(page),
     });
 
-  const first = await fetchPage(1);
+  const first = await searchPage(1);
   if (token !== pickToken) return false;
   const movies = [...first.results];
   for (let p = 2; p <= Math.min(first.total_pages, 5); p++) {
-    const data = await fetchPage(p);
+    const data = await searchPage(p);
     if (token !== pickToken) return false;
     movies.push(...data.results);
   }
-  movies.sort(byMatchThenRelease(search.title));
-  titlePool = { query: search.title, movies, total: first.total_results };
+
+  if (broadSearch()) {
+    const ids = await topicKeywordIds(search.query);
+    if (token !== pickToken) return false;
+    if (ids.length) {
+      const seen = new Set(movies.map((m) => m.id));
+      for (let p = 1; p <= 3; p++) {
+        // The current filters apply, except with_keywords, which the topic
+        // takes over — a chosen format is still checked on each pick.
+        const params = { ...discoverParams(p), with_keywords: ids.join("|") };
+        const data = await tmdbFetch("/discover/movie", params);
+        if (token !== pickToken) return false;
+        for (const m of data.results) {
+          if (!seen.has(m.id)) {
+            seen.add(m.id);
+            movies.push(m);
+          }
+        }
+        if (p >= data.total_pages) break;
+      }
+    }
+  }
+
+  movies.sort(broadSearch() ? byBreadthThenPopularity(search.query) : byMatchThenRelease(search.query));
+  queryPool = { key, movies, total: broadSearch() ? movies.length : first.total_results };
   return true;
 }
 
-async function pickFromTitle(token) {
-  if (!(await ensureTitlePool(token))) return;
+async function pickFromQuery(token) {
+  if (!(await ensureQueryPool(token))) return;
 
   if (announceCount) {
     announceCount = false;
-    if (titlePool.total > 0) {
+    if (queryPool.total > 0) {
       showToast(
-        titlePool.total.toLocaleString() + (titlePool.total === 1 ? " match" : " matches"),
+        queryPool.total.toLocaleString() + (queryPool.total === 1 ? " match" : " matches"),
         null,
         2000
       );
@@ -450,10 +519,10 @@ async function pickFromTitle(token) {
 
   // Nothing is held back from a title lookup — a movie already sitting in a
   // list can still be found by name.
-  const usable = titlePool.movies.filter((m) => m.poster_path);
+  const usable = queryPool.movies.filter((m) => m.poster_path);
   if (!usable.length) {
     showPickError(
-      'No movies found for "' + search.title + '". Check the spelling, or try fewer words.'
+      'No movies found for "' + search.query + '". Check the spelling, or try fewer words.'
     );
     return;
   }
@@ -477,7 +546,9 @@ async function pickFromTitle(token) {
 
 function searchSummary() {
   const bits = [];
-  if (search.title) bits.push('matching "' + search.title + '"');
+  if (search.query) {
+    bits.push((broadSearch() ? 'about "' : 'matching "') + search.query + '"');
+  }
   if (effectiveAge() < 17) bits.push("rated " + certForAge(effectiveAge()) + " or under");
   if (settings.fromYear) bits.push(settings.fromYear + " and newer");
   if (search.advanced) {
@@ -549,8 +620,8 @@ function servePick(details) {
 // During a title lookup a saved movie has to be one of the movies that lookup
 // found — TMDB's own answer to "does this match", typos and all.
 function eligibleForInjection(id) {
-  if (!search.title) return true;
-  return titlePool.query === search.title && titlePool.movies.some((m) => m.id === id);
+  if (!search.query) return true;
+  return queryPool.key === queryPoolKey() && queryPool.movies.some((m) => m.id === id);
 }
 
 // Entries saved before this was recorded have no timestamp; those have plainly
@@ -605,7 +676,7 @@ async function pickMovie() {
       if (outcome !== "none") return;
     }
 
-    if (search.title) return await pickFromTitle(token);
+    if (search.query) return await pickFromQuery(token);
 
     const excluded = excludedIds();
     const first = await tmdbFetch("/discover/movie", discoverParams(1));
@@ -976,6 +1047,27 @@ function buildRuntimeOptions() {
   sel.value = search.maxRuntime ? String(search.maxRuntime) : "";
 }
 
+function renderQueryMode() {
+  for (const btn of $("queryMode").querySelectorAll(".seg-btn")) {
+    btn.classList.toggle("active", btn.dataset.qmode === search.queryMode);
+  }
+  $("queryModeHint").textContent = broadSearchMode()
+    ? "Anything: titles plus TMDB's topic tags, with anything whose description "
+      + "mentions the word ranked above the rest."
+    : "Title: closest matches first, then oldest to newest — \"Harry Potter\" "
+      + "walks the series in order.";
+}
+
+$("queryMode").addEventListener("click", (e) => {
+  const btn = e.target.closest(".seg-btn");
+  if (!btn) return;
+  search.queryMode = btn.dataset.qmode;
+  renderQueryMode();
+});
+
+// The mode as chosen on the form, before a query has been typed.
+const broadSearchMode = () => search.queryMode === "anything";
+
 function renderGenreMode() {
   for (const btn of $("genreMode").querySelectorAll(".seg-btn")) {
     btn.classList.toggle("active", btn.dataset.mode === search.genreMode);
@@ -1057,7 +1149,8 @@ async function renderGenreChips() {
 // advanced alike. It doesn't run the search — the form is left cleared for
 // the user to add to and apply.
 function resetSearch() {
-  search.title = "";
+  search.query = "";
+  search.queryMode = "title";
   search.advanced = false;
   search.genres.clear();
   search.genreMode = "all";
@@ -1080,7 +1173,8 @@ function resetSearch() {
 }
 
 function fillSearchForm() {
-  $("inpTitle").value = search.title;
+  $("inpQuery").value = search.query;
+  renderQueryMode();
   $("inpAge").value = settings.age || "";
   $("inpYear").value = settings.fromYear || "";
   $("chkAdvanced").checked = search.advanced;
@@ -1182,7 +1276,7 @@ $("btnApplySearch").addEventListener("click", async () => {
   settings.fromYear = year;
   saveSettings();
 
-  search.title = $("inpTitle").value.trim();
+  search.query = $("inpQuery").value.trim();
   search.advanced = $("chkAdvanced").checked;
   const btn = $("btnApplySearch");
   btn.disabled = true;
@@ -1330,7 +1424,8 @@ function openInfo() {
 // person or studio: all time (blank year), blank age (21), no other filters.
 function forceSearchFor(kind, id, name) {
   search.advanced = true;
-  search.title = "";
+  search.query = "";
+  search.queryMode = "title";
   search.genres.clear();
   search.genreMode = "all";
   search.medium = "";
