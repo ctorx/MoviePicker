@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.14.0";
+const APP_VERSION = "2.15.0";
 
 // ---------- State (localStorage) ----------
 
@@ -1002,13 +1002,11 @@ function openInfo() {
 
   trailerKey = trailerKeyFor(m);
   $("btnTrailer").hidden = !trailerKey;
-  // The Parents Guide is the unmetered second opinion, and TMDB hands us the
-  // exact IMDb id, so it's a real deep link rather than a guessed slug.
+  // TMDB hands us the exact IMDb id, so the Parents Guide is a real deep link.
   $("lnkIMDb").hidden = !m.imdb_id;
   if (m.imdb_id) {
     $("lnkIMDb").href = "https://www.imdb.com/title/" + m.imdb_id + "/parentalguide";
   }
-  $("lnkCSM").href = "https://www.commonsensemedia.org/movie-reviews/" + csmSlug(m.title);
   navPush("info");
 }
 
@@ -1038,19 +1036,6 @@ function forcePersonSearch(kind, id, name) {
   navHome();
   show("screen-pick");
   pickMovie();
-}
-
-// Common Sense Media review slugs are the lowercased title with punctuation
-// dropped, e.g. "Spider-Man: Into the Spider-Verse" -> spider-man-into-the-spider-verse
-function csmSlug(title) {
-  return title
-    .toLowerCase()
-    .normalize("NFKD")
-    .replace(/[̀-ͯ]/g, "")
-    .replace(/&/g, " and ")
-    .replace(/['’]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
 }
 
 

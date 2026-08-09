@@ -421,7 +421,8 @@ button:active { transform: scale(0.98); }
 }
 .trailer-btn svg { width: 16px; height: 16px; }
 
-.csm-btn {
+/* A link out of the app, styled to sit next to the trailer button. */
+.ext-btn {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -435,10 +436,7 @@ button:active { transform: scale(0.98); }
   text-decoration: none;
   align-self: flex-start;
 }
-.csm-btn svg { width: 16px; height: 16px; }
-
-.advisory-links { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-.advisory-links .csm-btn { margin-top: 0; }
+.ext-btn svg { width: 16px; height: 16px; }
 
 #infoOverview { margin-top: 16px; }
 
