@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.19.0";
+const APP_VERSION = "2.19.1";
 
 // ---------- State (localStorage) ----------
 
@@ -804,14 +804,14 @@ function listEntry(m) {
   };
 }
 
-function markCurrent(listName) {
+function markCurrent(listName, thenPick = true) {
   if (!current) return;
   lists[listName][current.id] = listEntry(current);
   saveLists();
   refreshCounts();
   lastShownId = current.id;
   current = null;
-  pickMovie();
+  if (thenPick) pickMovie();
 }
 
 // A literal skip: nothing is stored, the movie stays in the rotation.
@@ -883,7 +883,9 @@ function applyHash() {
   // The rating sheet floats over whatever opened it, so that screen stays put
   // behind it — the seen list keeps its place while a rating is given.
   const h = raw === "rate" ? ratingUnder : raw;
-  setShown("modalRate", raw === "rate" && !!ratingTarget);
+  const rating = raw === "rate" && !!ratingTarget;
+  setShown("modalRate", rating);
+  if (!rating && ratingTarget) closeRating();
   document.body.classList.toggle("drawer-open", h === "menu");
 
   const listName = h.startsWith("list-") ? h.slice(5) : null;
@@ -1549,11 +1551,13 @@ function endDrag(e) {
   } else if (axis === "y" && dy > 90) {
     const watched = current;
     swipeOut("y", 1, () => {
-      // Filed as seen first, exactly as before — the next movie is already
-      // loading behind the sheet, and a dismissed rating costs nothing.
-      markCurrent("seen");
+      // Filed as seen straight away, so a dismissed rating still counts — but
+      // the next movie is held back until the sheet closes, leaving the one
+      // being rated on screen behind it instead of the next one.
+      markCurrent("seen", false);
       const entry = watched && lists.seen[watched.id];
-      if (entry) openRating(watched.id, entry);
+      if (entry) openRating(watched.id, entry, pickMovie);
+      else pickMovie();
     });
   } else {
     snapBack();
@@ -1594,9 +1598,20 @@ function renderStars(box, rating, onPick) {
 
 let ratingTarget = null; // { id, entry } being rated
 let ratingUnder = ""; // hash of the screen the sheet opened over
+let ratingAfter = null; // held until the sheet closes — see the swipe handler
 
-function openRating(id, entry) {
+// However the sheet is dismissed — a star, Skip, or the back button — whatever
+// was waiting on it runs now.
+function closeRating() {
+  const after = ratingAfter;
+  ratingTarget = null;
+  ratingAfter = null;
+  if (after) after();
+}
+
+function openRating(id, entry, after) {
   ratingTarget = { id: String(id), entry };
+  ratingAfter = after || null;
   ratingUnder = location.hash.replace(/^#/, "");
   $("rateMovie").textContent = entry.title + (entry.year ? " (" + entry.year + ")" : "");
   renderStars($("rateStars"), entry.rating || 0, (n) => {
