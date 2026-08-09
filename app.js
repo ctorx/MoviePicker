@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.20.1";
+const APP_VERSION = "2.21.0";
 
 // ---------- State (localStorage) ----------
 
@@ -536,6 +536,9 @@ let announceCount = false; // show a result-count toast after the next fetch (ne
 // where it would have been a legitimate result anyway.
 const WATCHLIST_EVERY = 20;
 const WATCHLIST_TRIES = 5; // details fetches spent looking for a qualifying one
+// A movie saved moments ago coming straight back around reads as a bug, so an
+// entry has to have sat on the list for a day before it's up for injection.
+const WATCHLIST_HOLD_MS = 24 * 60 * 60 * 1000;
 let picksServed = 0;
 
 function servePick(details) {
@@ -550,6 +553,12 @@ function eligibleForInjection(id) {
   return titlePool.query === search.title && titlePool.movies.some((m) => m.id === id);
 }
 
+// Entries saved before this was recorded have no timestamp; those have plainly
+// been sitting there a while, so they count as settled.
+function settledOnWatchlist(entry) {
+  return Date.now() - (entry.added || 0) >= WATCHLIST_HOLD_MS;
+}
+
 // "rendered" | "stale" (a newer pick started) | "none" (fall back to discover)
 async function tryWatchlistPick(token) {
   // The stored year is enough to drop the obvious misses before spending a
@@ -558,6 +567,7 @@ async function tryWatchlistPick(token) {
     Object.entries(lists.watchlist)
       .filter(([id, e]) =>
         Number(id) !== lastShownId &&
+        settledOnWatchlist(e) &&
         eligibleForInjection(Number(id)) &&
         (!settings.fromYear || parseInt(e.year, 10) >= settings.fromYear))
       .map(([id]) => Number(id))
@@ -809,6 +819,12 @@ function listEntry(m) {
   };
 }
 
+// Watchlist entries record when they were saved, so a movie just added can't
+// come straight back around in the rotation.
+function addToWatchlist(m) {
+  lists.watchlist[m.id] = { ...listEntry(m), added: Date.now() };
+}
+
 function markCurrent(listName, thenPick = true) {
   if (!current) return;
   lists[listName][current.id] = listEntry(current);
@@ -832,7 +848,7 @@ function toggleWatchlist() {
   if (lists.watchlist[current.id]) {
     delete lists.watchlist[current.id];
   } else {
-    lists.watchlist[current.id] = listEntry(current);
+    addToWatchlist(current);
   }
   saveLists();
   refreshCounts();
@@ -1533,7 +1549,7 @@ function endDrag(e) {
   if (axis === "x" && dx > 90) {
     swipeOut("x", 1, () => {
       if (current && !lists.watchlist[current.id]) {
-        lists.watchlist[current.id] = listEntry(current);
+        addToWatchlist(current);
         saveLists();
         refreshCounts();
       }
