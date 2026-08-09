@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.22.2";
+const APP_VERSION = "2.22.3";
 
 // ---------- State (localStorage) ----------
 
@@ -422,22 +422,27 @@ function byMatchThenRelease(query) {
 // full run of obscure titles that happen to contain the word — search
 // "zombie" and 28 Days Later lands past forty of them, which reads as a search
 // that never left the titles at all.
-const MATCH_WEIGHT = { title: 3, overview: 1.5, tag: 1 };
+// An exact title outranks a partial one, which outranks a description mention,
+// which outranks a tag — but only as a multiplier on popularity, never as an
+// absolute. Putting exact titles first outright reads well for "Zombieland"
+// and terribly for a common word: a dozen forgotten movies are named exactly
+// "Heist" or "Vampires", and every one of them would come before the heist and
+// vampire movies actually being asked for. Title mode is where an exact name
+// wins outright; this mode is asking about a subject.
+const MATCH_WEIGHT = { exact: 5, title: 3, overview: 1.5, tag: 1 };
 
 function byRelevance(query) {
   const term = query.toLowerCase();
-  const exact = (m) => titleRank(m.title, query) === 0;
   const score = (m) => {
-    const where = titleRank(m.title, query) <= 2
-      ? "title"
-      : (m.overview || "").toLowerCase().includes(term) ? "overview" : "tag";
+    const rank = titleRank(m.title, query);
+    const where = rank === 0
+      ? "exact"
+      : rank <= 2
+        ? "title"
+        : (m.overview || "").toLowerCase().includes(term) ? "overview" : "tag";
     return (m.popularity || 0) * MATCH_WEIGHT[where];
   };
-  return (a, b) => {
-    // Typing a movie's exact name means that movie, whatever its popularity.
-    if (exact(a) !== exact(b)) return exact(a) ? -1 : 1;
-    return score(b) - score(a);
-  };
+  return (a, b) => score(b) - score(a);
 }
 
 // Sorting needs the whole result set, so it's fetched once per query and kept:
@@ -469,16 +474,34 @@ function tagMatchesTerm(name, term) {
   return tag.includes(q) || (q.includes(tag) && tag.length >= TAG_MIN_LEN);
 }
 
+// TMDB matches the query as a substring of the tag's name, so a word can never
+// turn up the tag it was derived from: asking for "dystopian" is exactly how
+// you miss "dystopia" — the tag holding Mad Max, Dune and Interstellar, 93
+// movies since 2010, against none under every "dystopian" tag combined.
+// Trimming the word back a couple of letters surfaces both spellings, and the
+// filter above discards whatever else the shorter query drags in.
+const STEM_MIN_LEN = 6;
+
 async function topicKeywordIds(term) {
-  try {
-    const r = await tmdbFetch("/search/keyword", { query: term });
-    return (r.results || [])
-      .filter((k) => tagMatchesTerm(k.name, term))
-      .slice(0, 5)
-      .map((k) => k.id);
-  } catch {
-    return []; // titles alone still make a pool
+  const queries = [term];
+  if (term.length >= STEM_MIN_LEN) queries.push(term.slice(0, -2));
+  const found = new Map();
+  for (const query of queries) {
+    try {
+      const r = await tmdbFetch("/search/keyword", { query });
+      for (const k of r.results || []) {
+        if (tagMatchesTerm(k.name, term)) found.set(k.id, k.name);
+      }
+    } catch {
+      // Titles alone still make a pool.
+    }
   }
+  // Shortest name first: the broadest tag holds by far the most movies, and
+  // only a handful of ids are worth putting on the request.
+  return [...found.entries()]
+    .sort((a, b) => a[1].length - b[1].length)
+    .slice(0, 5)
+    .map(([id]) => id);
 }
 
 async function ensureQueryPool(token) {
