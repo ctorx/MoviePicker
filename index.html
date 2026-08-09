@@ -163,7 +163,12 @@
         <label for="selRuntime">Max length</label>
         <select id="selRuntime"></select>
       </div>
+    </div>
 
+    <!-- Sticky, so the actions are reachable from anywhere in a long form.
+         The error lives here too: it's no use appearing beside a field the
+         user has already scrolled past. -->
+    <div class="sticky-actions">
       <p id="searchError" class="error" hidden></p>
       <button id="btnApplySearch" class="primary">Find movies</button>
       <button id="btnResetSearch" class="link-btn">Reset to defaults</button>
