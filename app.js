@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.16.0";
+const APP_VERSION = "2.17.0";
 
 // ---------- State (localStorage) ----------
 
@@ -121,62 +121,71 @@ function certAllowed(m) {
 // ---------- Production format ----------
 
 // TMDB has no field for how a movie was made, so every format except live
-// action rides on its keyword tags. Keyword ids aren't stable enough to hard
-// code, so the names below are resolved against TMDB at runtime and a chip
-// only appears once its keywords come back — if TMDB doesn't know a name, the
-// option quietly isn't offered.
+// action rides on its keyword tags — a format matches any one of its keywords.
+// The ids and their pool sizes (under this app's vote floors) were checked
+// against TMDB on 2026-08-09; the comment on each line is the keyword's name,
+// which is what to re-resolve against /search/keyword if one ever goes quiet.
 //
 // Coverage is contributor-supplied and uneven: a format finds the movies TMDB
 // has tagged, not every movie that qualifies.
 const MEDIUMS = [
-  // Live action is the one that doesn't need keywords: it's "not animated",
-  // and without_genres is its own parameter, so it ANDs cleanly with the rest.
-  { key: "live", label: "Live action", withoutGenre: 16 },
-  { key: "stopmotion", label: "Stop motion", keywords: ["stop motion", "claymation"] },
-  { key: "mixed", label: "Mixed media", keywords: ["live action and animation"] },
-  { key: "handdrawn", label: "Hand-drawn", keywords: ["traditional animation", "hand drawn animation"] },
-  { key: "cgi", label: "CGI", keywords: ["computer animation", "cgi animation"] },
-  { key: "anime", label: "Anime", keywords: ["anime"] },
-  { key: "puppets", label: "Puppets", keywords: ["puppet", "puppetry"] },
-  { key: "silent", label: "Silent", keywords: ["silent film"] },
-  { key: "bw", label: "Black & white", keywords: ["black and white"] },
+  // Live action is the one that needs no keywords: it's "not animated", and
+  // without_genres is its own parameter, so it ANDs cleanly with the rest.
+  { key: "live", label: "Live action", withoutGenre: 16 }, // ~8100
+  { key: "animated", label: "Animated", withGenre: 16 }, // ~1400
+  { key: "stopmotion", label: "Stop motion", keywordIds: [
+    10121,  // stop motion
+    358482, // stop motion animation
+    378665, // stopmotion
+    197065, // claymation
+    290380, // puppet animation
+    214793, // cutout animation
+    254209, // pixilation
+  ] }, // ~47
+  { key: "handdrawn", label: "Hand-drawn", keywordIds: [
+    367675, // traditional animation
+    234662, // hand drawn animation
+    243752, // cel animation
+    366485, // 2d animation
+    11237,  // rotoscoping
+  ] }, // ~17
+  { key: "cgi", label: "CGI", keywordIds: [
+    10159,  // computer animation
+    278823, // 3d animation
+    196544, // motion capture
+  ] }, // ~388
+  { key: "anime", label: "Anime", keywordIds: [210024] }, // anime, ~240
+  { key: "mixed", label: "Mixed media", keywordIds: [
+    209220, // live action and animation
+    267537, // mixed media
+  ] }, // ~67
+  { key: "puppets", label: "Puppets", keywordIds: [
+    6300,   // puppet
+    11691,  // puppetry
+    263312, // puppets
+  ] }, // ~30
+  { key: "foundfootage", label: "Found footage", keywordIds: [163053] }, // ~69
+  { key: "silent", label: "Silent", keywordIds: [154802] }, // silent film, ~41
+  { key: "bw", label: "Black & white", keywordIds: [
+    12999,  // black and white
+    363676, // black-and-white
+  ] }, // ~263
 ];
 
 const mediumByKey = (key) => MEDIUMS.find((m) => m.key === key);
-
-// Resolved once per session. Exact name matches only — TMDB's keyword search
-// is fuzzy, and a near miss would put a chip on screen that filters to junk.
-let mediumsReady = null;
-
-function resolveKeyword(name) {
-  return tmdbFetch("/search/keyword", { query: name })
-    .then((r) => (r.results || []).filter((k) => k.name.toLowerCase() === name).map((k) => k.id))
-    .catch(() => []); // one dud name shouldn't cost the rest of the list
-}
-
-function ensureMediums() {
-  if (!mediumsReady) {
-    mediumsReady = Promise.all(
-      MEDIUMS.filter((m) => m.keywords).map(async (m) => {
-        const found = await Promise.all(m.keywords.map(resolveKeyword));
-        m.keywordIds = [...new Set(found.flat())];
-      })
-    ).then(() => {
-      const available = MEDIUMS.filter((m) => !m.keywords || m.keywordIds.length);
-      // Nothing at all resolving means the network was down, not that TMDB
-      // dropped every keyword — drop the cache so the next open retries.
-      if (available.length <= 1) mediumsReady = null;
-      return available;
-    });
-  }
-  return mediumsReady;
-}
 
 function mediumParams(p) {
   const m = mediumByKey(search.medium);
   if (!m) return;
   if (m.withoutGenre) p.without_genres = String(m.withoutGenre);
-  if (m.keywordIds?.length) p.with_keywords = m.keywordIds.join("|"); // any of them
+  if (m.keywordIds) p.with_keywords = m.keywordIds.join("|"); // any of them
+  if (m.withGenre) {
+    // Animation is a genre, so it shares with_genres with the genre chips.
+    // TMDB honours mixed precedence — "35|12,16" is (comedy or adventure)
+    // AND animated — so the format ANDs on cleanly in either genre mode.
+    const chosen = [...search.genres].join(search.genreMode === "any" ? "|" : ",");
+    p.with_genres = chosen ? chosen + "," + m.withGenre : String(m.withGenre);
+  }
 }
 
 // The keyword tags a discover search matched on, re-checked against a loaded
@@ -184,8 +193,10 @@ function mediumParams(p) {
 function mediumOk(movie) {
   const m = mediumByKey(search.medium);
   if (!m) return true;
-  if (m.withoutGenre && (movie.genres || []).some((g) => g.id === m.withoutGenre)) return false;
-  if (m.keywordIds?.length) {
+  const genres = (movie.genres || []).map((g) => g.id);
+  if (m.withoutGenre && genres.includes(m.withoutGenre)) return false;
+  if (m.withGenre && !genres.includes(m.withGenre)) return false;
+  if (m.keywordIds) {
     const tags = (movie.keywords?.keywords || []).map((k) => k.id);
     if (!m.keywordIds.some((id) => tags.includes(id))) return false;
   }
@@ -867,26 +878,21 @@ $("genreMode").addEventListener("click", (e) => {
 // One format at a time: each maps to a different discover parameter, and
 // TMDB can't OR across parameters, so a multi-select would quietly turn into
 // an AND and return nothing. Tapping the active chip clears it.
-async function renderMediumChips() {
+function renderMediumChips() {
   const box = $("mediumChips");
-  try {
-    const available = await ensureMediums();
-    box.innerHTML = "";
-    for (const m of available) {
-      const chip = document.createElement("button");
-      chip.type = "button";
-      chip.className = "chip";
-      chip.textContent = m.label;
+  box.innerHTML = "";
+  for (const m of MEDIUMS) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "chip";
+    chip.textContent = m.label;
+    chip.classList.toggle("active", search.medium === m.key);
+    chip.addEventListener("click", () => {
+      search.medium = search.medium === m.key ? "" : m.key;
+      for (const other of box.querySelectorAll(".chip")) other.classList.remove("active");
       chip.classList.toggle("active", search.medium === m.key);
-      chip.addEventListener("click", () => {
-        search.medium = search.medium === m.key ? "" : m.key;
-        for (const other of box.querySelectorAll(".chip")) other.classList.remove("active");
-        chip.classList.toggle("active", search.medium === m.key);
-      });
-      box.appendChild(chip);
-    }
-  } catch {
-    box.innerHTML = '<p class="hint">Couldn\'t load formats. Check your connection.</p>';
+    });
+    box.appendChild(chip);
   }
 }
 
@@ -913,7 +919,29 @@ async function renderGenreChips() {
   }
 }
 
-function openSearch() {
+// Back to a first-run search: everything the two screens can set, basic and
+// advanced alike. It doesn't run the search — the form is left cleared for
+// the user to add to and apply.
+function resetSearch() {
+  search.title = "";
+  search.advanced = false;
+  search.genres.clear();
+  search.genreMode = "all";
+  search.medium = "";
+  search.actors = ""; search.actorIds = []; search.actorNames = [];
+  search.director = ""; search.directorIds = []; search.directorNames = [];
+  search.composer = ""; search.composerIds = []; search.composerNames = [];
+  search.maxRuntime = 150;
+  // Age and year outlive the session, so clearing them has to stick even if
+  // the user closes the search screen without applying.
+  settings.age = null;
+  settings.fromYear = null;
+  saveSettings();
+  fillSearchForm();
+  showToast("Search reset to defaults", null, 2000);
+}
+
+function fillSearchForm() {
   $("inpTitle").value = search.title;
   $("inpAge").value = settings.age || "";
   $("inpYear").value = settings.fromYear || "";
@@ -930,9 +958,14 @@ function openSearch() {
   }
   updateCertHint();
   $("searchError").hidden = true;
+}
+
+function openSearch() {
+  fillSearchForm();
   navPush("search");
 }
 
+$("btnResetSearch").addEventListener("click", resetSearch);
 $("btnSearch").addEventListener("click", openSearch);
 $("btnErrorSearch").addEventListener("click", openSearch);
 $("inpAge").addEventListener("input", updateCertHint);
