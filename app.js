@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.18.1";
+const APP_VERSION = "2.19.0";
 
 // ---------- State (localStorage) ----------
 
@@ -846,7 +846,7 @@ function refreshCounts() {
 // #list-*, #trailer) so the browser/phone back button closes it instead of
 // exiting the app. The hash is the single source of truth for what's open.
 
-const MODALS = ["modalSearch", "modalInfo", "modalList", "modalSettings"];
+const MODALS = ["modalSearch", "modalInfo", "modalList", "modalSettings", "modalRate"];
 
 function navPush(frag) {
   if (location.hash === "#" + frag) {
@@ -879,7 +879,11 @@ function setShown(id, shown) {
 }
 
 function applyHash() {
-  const h = location.hash.replace(/^#/, "");
+  const raw = location.hash.replace(/^#/, "");
+  // The rating sheet floats over whatever opened it, so that screen stays put
+  // behind it — the seen list keeps its place while a rating is given.
+  const h = raw === "rate" ? ratingUnder : raw;
+  setShown("modalRate", raw === "rate" && !!ratingTarget);
   document.body.classList.toggle("drawer-open", h === "menu");
 
   const listName = h.startsWith("list-") ? h.slice(5) : null;
@@ -1543,7 +1547,14 @@ function endDrag(e) {
   } else if (axis === "y" && dy < -90) {
     swipeOut("y", -1, skipCurrent);
   } else if (axis === "y" && dy > 90) {
-    swipeOut("y", 1, () => markCurrent("seen"));
+    const watched = current;
+    swipeOut("y", 1, () => {
+      // Filed as seen first, exactly as before — the next movie is already
+      // loading behind the sheet, and a dismissed rating costs nothing.
+      markCurrent("seen");
+      const entry = watched && lists.seen[watched.id];
+      if (entry) openRating(watched.id, entry);
+    });
   } else {
     snapBack();
   }
@@ -1551,6 +1562,55 @@ function endDrag(e) {
 
 swipeArea.addEventListener("pointerup", endDrag);
 swipeArea.addEventListener("pointercancel", endDrag);
+
+// ---------- Star ratings ----------
+
+// Ratings live on the seen entry as `rating` (1–5). An entry without one is
+// simply unrated — every seen movie from before this existed reads that way.
+const STAR_PATH =
+  "M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z";
+const STAR_SVG = (filled) =>
+  '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="' + STAR_PATH + '"' +
+  (filled ? ' fill="currentColor"/>' : ' fill="none" stroke="currentColor" stroke-width="1.7"/>') +
+  "</svg>";
+
+// Filled up to `rating`, hollow after it — five hollow stars when unrated.
+// With onPick each star is its own button; without it the strip is display
+// only and the caller decides what a tap on the whole thing does.
+function renderStars(box, rating, onPick) {
+  box.innerHTML = "";
+  for (let i = 1; i <= 5; i++) {
+    const star = document.createElement(onPick ? "button" : "span");
+    star.className = "star" + (i <= rating ? " on" : "");
+    star.innerHTML = STAR_SVG(i <= rating);
+    if (onPick) {
+      star.type = "button";
+      star.setAttribute("aria-label", i === 1 ? "1 star" : i + " stars");
+      star.addEventListener("click", () => onPick(i));
+    }
+    box.appendChild(star);
+  }
+}
+
+let ratingTarget = null; // { id, entry } being rated
+let ratingUnder = ""; // hash of the screen the sheet opened over
+
+function openRating(id, entry) {
+  ratingTarget = { id: String(id), entry };
+  ratingUnder = location.hash.replace(/^#/, "");
+  $("rateMovie").textContent = entry.title + (entry.year ? " (" + entry.year + ")" : "");
+  renderStars($("rateStars"), entry.rating || 0, (n) => {
+    const seen = lists.seen[ratingTarget.id];
+    if (seen) {
+      seen.rating = n;
+      saveLists();
+    }
+    navBack();
+  });
+  navPush("rate");
+}
+
+$("btnRateSkip").addEventListener("click", navBack);
 
 // ---------- Saved lists (drawer) ----------
 
@@ -1597,6 +1657,20 @@ function buildRow(id, entry) {
   year.className = "row-year";
   year.textContent = entry.year || "";
   text.append(title, year);
+
+  // Seen movies carry a rating; the strip shows it and opens the sheet to
+  // change it, so it must not also count as a tap on the row.
+  if (openListName === "seen") {
+    const stars = document.createElement("div");
+    stars.className = "stars row-stars";
+    renderStars(stars, entry.rating || 0, null);
+    stars.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openRating(id, entry);
+    });
+    text.appendChild(stars);
+  }
+
   inner.append(img, text);
   li.appendChild(inner);
 

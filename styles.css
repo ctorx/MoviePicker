@@ -13,6 +13,7 @@
   --accent: #01d277;
   --danger: #e05c5c;
   --heart: #ff4d6d;
+  --star: #f5c518;
   --radius: 12px;
 }
 
@@ -524,6 +525,52 @@ button:active { transform: scale(0.98); }
 }
 .row-title { font-weight: 600; }
 .row-year { color: var(--muted); font-size: 0.85rem; }
+
+/* ---------- Star ratings ---------- */
+
+.stars { display: flex; gap: 2px; color: var(--star); }
+.star {
+  display: inline-flex;
+  padding: 0;
+  background: none;
+  border: none;
+  color: inherit;
+  line-height: 0;
+}
+.star svg { width: 16px; height: 16px; display: block; }
+
+/* Unrated stars sit back until they're filled in. */
+.star:not(.on) { color: var(--muted); }
+
+.row-stars { margin-top: 3px; padding: 2px 0; }
+
+.stars-lg { justify-content: center; gap: 6px; margin: 16px 0 4px; }
+.stars-lg .star { padding: 4px; }
+.stars-lg .star svg { width: 36px; height: 36px; }
+.stars-lg .star:active { transform: scale(0.9); }
+
+/* Sits above the toast so a pick loading behind it can't cover the sheet. */
+.sheet-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.6);
+}
+.sheet {
+  width: min(340px, 100%);
+  padding: 20px;
+  border-radius: var(--radius);
+  background: var(--card);
+  border: 1px solid var(--border);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+  text-align: center;
+}
+.sheet h2 { margin: 0; }
+.sheet .hint { margin-top: 4px; }
 
 /* ---------- Drawer ---------- */
 
