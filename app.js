@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.18.0";
+const APP_VERSION = "2.18.1";
 
 // ---------- State (localStorage) ----------
 
@@ -61,7 +61,7 @@ const search = {
   budget: "", // MONEY range key, "" = any
   revenue: "",
   englishOnly: false,
-  maxRuntime: 150,
+  maxRuntime: 0, // 0 = no limit
 };
 
 function effectiveAge() {
@@ -1042,7 +1042,7 @@ function resetSearch() {
   search.budget = "";
   search.revenue = "";
   search.englishOnly = false;
-  search.maxRuntime = 150;
+  search.maxRuntime = 0;
   // Age and year outlive the session, so clearing them has to stick even if
   // the user closes the search screen without applying.
   settings.age = null;
