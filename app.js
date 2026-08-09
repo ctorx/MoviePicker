@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.10.1";
+const APP_VERSION = "2.11.0";
 
 // ---------- State (localStorage) ----------
 
@@ -43,6 +43,7 @@ function saveLists() { store.save("mp_lists", lists); }
 const search = {
   advanced: false,
   genres: new Set(),
+  genreMode: "all", // "all" = must have every selected genre, "any" = at least one
   actors: "",
   actorIds: [],
   actorNames: [],
@@ -120,7 +121,12 @@ function discoverParams(page) {
   };
   if (settings.fromYear) p["primary_release_date.gte"] = settings.fromYear + "-01-01";
   if (search.advanced) {
-    if (search.genres.size) p.with_genres = [...search.genres].join(",");
+    if (search.genres.size) {
+      // TMDB reads a comma as AND and a pipe as OR. Every other filter
+      // (cast, crew, runtime, year, certification) is a separate parameter,
+      // so it still ANDs with whichever genre mode is in play.
+      p.with_genres = [...search.genres].join(search.genreMode === "any" ? "|" : ",");
+    }
     if (search.actorIds.length) p.with_cast = search.actorIds.join(",");
     const crewIds = [...search.directorIds, ...search.composerIds];
     if (crewIds.length) p.with_crew = crewIds.join(",");
@@ -161,7 +167,8 @@ function searchSummary() {
   if (settings.fromYear) bits.push(settings.fromYear + " and newer");
   if (search.advanced) {
     if (search.genres.size && genreCache) {
-      bits.push(genreCache.filter((g) => search.genres.has(g.id)).map((g) => g.name).join("/"));
+      const names = genreCache.filter((g) => search.genres.has(g.id)).map((g) => g.name);
+      bits.push(names.join(search.genreMode === "any" ? " or " : " + "));
     }
     if (search.actorNames.length) bits.push("with " + search.actorNames.join(" & "));
     if (search.directorNames.length) bits.push("directed by " + search.directorNames.join(" & "));
@@ -203,6 +210,40 @@ function shuffle(arr) {
 let pickToken = 0; // ignore stale responses when the user re-searches mid-load
 let announceCount = false; // show a result-count toast after the next fetch (new searches only)
 
+// Favorites are excluded from discover results, so every FAVORITE_EVERY-th
+// pick hands one back deliberately: a random favorite instead of a new movie.
+// Only the age rating still applies — the rest of the search doesn't, because
+// the point is resurfacing something already loved, not another filtered result.
+const FAVORITE_EVERY = 20;
+let picksServed = 0;
+
+function servePick(details) {
+  picksServed++;
+  renderMovie(details);
+}
+
+// "rendered" | "stale" (a newer pick started) | "none" (fall back to discover)
+async function tryFavoritePick(token) {
+  const ids = shuffle(Object.keys(lists.favorites).map(Number))
+    .filter((id) => id !== lastShownId);
+  for (const id of ids.slice(0, 3)) {
+    let details;
+    try {
+      details = await tmdbFetch("/movie/" + id, {
+        append_to_response: "credits,videos,release_dates",
+      });
+    } catch {
+      continue; // dead id or a network blip — a normal pick still gets a movie
+    }
+    if (token !== pickToken) return "stale";
+    if (!certAllowed(details)) continue;
+    servePick(details);
+    showToast("One from your favorites ❤", null, 2500);
+    return "rendered";
+  }
+  return "none";
+}
+
 async function pickMovie() {
   const token = ++pickToken;
   if (!$("card").hidden) {
@@ -211,6 +252,15 @@ async function pickMovie() {
     showPickState("loading");
   }
   try {
+    // Not on the first pick of a new search — that one belongs to the search
+    // (and owns the result-count toast).
+    if (!announceCount &&
+        (picksServed + 1) % FAVORITE_EVERY === 0 &&
+        Object.keys(lists.favorites).length) {
+      const outcome = await tryFavoritePick(token);
+      if (outcome !== "none") return;
+    }
+
     const excluded = excludedIds();
     const first = await tmdbFetch("/discover/movie", discoverParams(1));
     if (token !== pickToken) return;
@@ -256,7 +306,7 @@ async function pickMovie() {
         if (token !== pickToken) return;
         sessionShown.add(movie.id); // cert-rejected too, so we don't refetch them
         if (!certAllowed(details) || !crewOk(details)) continue;
-        renderMovie(details);
+        servePick(details);
         return;
       }
       showPickError("You've been through everything that matches this search. Try widening it.");
@@ -287,7 +337,7 @@ async function pickMovie() {
         });
         if (token !== pickToken) return;
         if (!certAllowed(details) || !crewOk(details)) continue;
-        renderMovie(details);
+        servePick(details);
         return;
       }
     }
@@ -560,6 +610,23 @@ function buildRuntimeOptions() {
   sel.value = search.maxRuntime ? String(search.maxRuntime) : "";
 }
 
+function renderGenreMode() {
+  for (const btn of $("genreMode").querySelectorAll(".seg-btn")) {
+    btn.classList.toggle("active", btn.dataset.mode === search.genreMode);
+  }
+  $("genreModeHint").textContent =
+    search.genreMode === "any"
+      ? "Any: a movie needs at least one of the selected genres."
+      : "All: a movie must have every selected genre. Picking several narrows it fast.";
+}
+
+$("genreMode").addEventListener("click", (e) => {
+  const btn = e.target.closest(".seg-btn");
+  if (!btn) return;
+  search.genreMode = btn.dataset.mode;
+  renderGenreMode();
+});
+
 async function renderGenreChips() {
   const box = $("genreChips");
   try {
@@ -592,6 +659,7 @@ function openSearch() {
   $("inpDirector").value = search.director;
   $("inpComposer").value = search.composer;
   buildRuntimeOptions();
+  renderGenreMode();
   if (search.advanced) renderGenreChips();
   updateCertHint();
   $("searchError").hidden = true;
@@ -779,6 +847,7 @@ function openInfo() {
 function forcePersonSearch(kind, id, name) {
   search.advanced = true;
   search.genres.clear();
+  search.genreMode = "all";
   search.maxRuntime = 0;
   search.actors = ""; search.actorIds = []; search.actorNames = [];
   search.director = ""; search.directorIds = []; search.directorNames = [];

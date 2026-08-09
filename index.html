@@ -99,8 +99,15 @@
       </label>
 
       <div id="advancedBox" hidden>
-        <label>Genres</label>
+        <div class="label-row">
+          <label>Genres</label>
+          <div id="genreMode" class="seg" role="group" aria-label="Genre matching">
+            <button type="button" class="seg-btn" data-mode="all">All</button>
+            <button type="button" class="seg-btn" data-mode="any">Any</button>
+          </div>
+        </div>
         <div id="genreChips" class="chips"><p class="hint">Loading genres…</p></div>
+        <p class="hint" id="genreModeHint"></p>
 
         <label for="inpActors">Actors / actresses</label>
         <input id="inpActors" type="text" autocomplete="off" placeholder="e.g. Tom Hanks, Meg Ryan">

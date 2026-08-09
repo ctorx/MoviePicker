@@ -358,6 +358,26 @@ button:active { transform: scale(0.98); }
 }
 .toggle-row input { width: 18px; height: 18px; accent-color: var(--accent); }
 
+/* A label with a control parked on the same line (e.g. Genres + All/Any). */
+.label-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
+
+.seg {
+  display: flex;
+  margin: 0 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.seg-btn {
+  padding: 5px 14px;
+  font-size: 0.85rem;
+  border-radius: 0;
+  background: var(--card);
+  color: var(--muted);
+}
+.seg-btn.active { background: var(--accent); color: #08301e; font-weight: 700; }
+
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip {
   padding: 7px 12px;
