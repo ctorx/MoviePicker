@@ -12,7 +12,7 @@
   --muted: #9ab;
   --accent: #01d277;
   --danger: #e05c5c;
-  --heart: #ff4d6d;
+  --watch: #4aa3ff;
   --star: #f5c518;
   --radius: 12px;
 }
@@ -176,7 +176,7 @@ button:active { transform: scale(0.98); }
   -webkit-user-drag: none;
 }
 
-.heart {
+.watch-btn {
   position: absolute;
   top: 8px;
   right: 8px;
@@ -189,19 +189,29 @@ button:active { transform: scale(0.98); }
   align-items: center;
   justify-content: center;
 }
-.heart svg {
-  width: 24px;
-  height: 24px;
+.watch-btn svg {
+  width: 26px;
+  height: 26px;
+  transition: transform 0.15s;
+}
+/* Empty check in a ring; on the watchlist the ring fills in behind the tick. */
+.mark-ring {
   fill: none;
   stroke: #fff;
-  stroke-width: 1.6;
-  transition: fill 0.15s, stroke 0.15s, transform 0.15s;
+  stroke-width: 1.8;
+  transition: fill 0.15s, stroke 0.15s;
 }
-.heart.active svg {
-  fill: var(--heart);
-  stroke: var(--heart);
-  transform: scale(1.1);
+.mark-tick {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: stroke 0.15s;
 }
+.watch-btn.active svg { transform: scale(1.1); }
+.watch-btn.active .mark-ring { fill: var(--watch); stroke: var(--watch); }
+.watch-btn.active .mark-tick { stroke: #06243d; }
 
 
 /* One badge shows at a time, centered over the poster. */
@@ -219,7 +229,7 @@ button:active { transform: scale(0.98); }
   opacity: 0;
   pointer-events: none;
 }
-.badge-fav { color: var(--heart); border: 3px solid var(--heart); }
+.badge-watch { color: var(--watch); border: 3px solid var(--watch); }
 .badge-skip { color: var(--muted); border: 3px solid var(--muted); }
 .badge-seen { color: var(--accent); border: 3px solid var(--accent); }
 .badge-block { color: var(--danger); border: 3px solid var(--danger); }
@@ -259,7 +269,7 @@ button:active { transform: scale(0.98); }
 /* Shimmer while the next movie loads: card keeps its size, content dims. */
 #card.loading #swipeArea { pointer-events: none; }
 #card.loading #poster { filter: brightness(0.45) saturate(0.3); }
-#card.loading .heart { visibility: hidden; }
+#card.loading .watch-btn { visibility: hidden; }
 #card.loading .poster-wrap::after {
   content: "";
   position: absolute;
@@ -523,6 +533,18 @@ button:active { transform: scale(0.98); }
   background: var(--bg);
   -webkit-user-drag: none;
 }
+.row-action {
+  margin-left: auto;
+  flex-shrink: 0;
+  padding: 7px 12px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--text);
+}
+
 .row-title { font-weight: 600; }
 .row-year { color: var(--muted); font-size: 0.85rem; }
 

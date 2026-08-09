@@ -58,11 +58,14 @@
         <div id="swipeArea">
           <div class="poster-wrap">
             <img id="poster" alt="Movie poster" draggable="false">
-            <button id="btnFav" class="heart" title="Favorite">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+            <button id="btnWatch" class="watch-btn" title="Add to watchlist">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <circle class="mark-ring" cx="12" cy="12" r="9"/>
+                <path class="mark-tick" d="M7.8 12.3l2.9 2.9 5.5-5.9"/>
+              </svg>
             </button>
             <div class="swipe-badge badge-skip" id="badgeSkip">SKIP</div>
-            <div class="swipe-badge badge-fav" id="badgeFav">❤</div>
+            <div class="swipe-badge badge-watch" id="badgeWatch">WATCHLIST</div>
             <div class="swipe-badge badge-seen" id="badgeSeen">SEEN</div>
             <div class="swipe-badge badge-block" id="badgeBlock">BLOCK</div>
           </div>
@@ -252,7 +255,7 @@
   <!-- Drawer -->
   <div id="drawerOverlay" class="overlay"></div>
   <nav id="drawer" class="drawer">
-    <button class="drawer-item" data-list="favorites">❤️ Favorites <span class="count" id="cntFavorites"></span></button>
+    <button class="drawer-item" data-list="watchlist">✅ Watchlist <span class="count" id="cntWatchlist"></span></button>
     <button class="drawer-item" data-list="seen">👀 Seen <span class="count" id="cntSeen"></span></button>
     <button class="drawer-item" data-list="blocked">🚫 Blocked <span class="count" id="cntBlocked"></span></button>
     <hr>

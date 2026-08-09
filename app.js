@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.19.1";
+const APP_VERSION = "2.20.0";
 
 // ---------- State (localStorage) ----------
 
@@ -29,9 +29,14 @@ function normalizeLists() {
     lists.blocked = { ...lists.never, ...(lists.blocked || {}) };
     delete lists.never;
   }
+  // Favorites became the watchlist in v2.20; same list, clearer name.
+  if (lists.favorites) {
+    lists.watchlist = { ...lists.favorites, ...(lists.watchlist || {}) };
+    delete lists.favorites;
+  }
   // Skips used to be tracked; they're ephemeral now.
   delete lists.skipped;
-  for (const name of ["favorites", "seen", "blocked"]) {
+  for (const name of ["watchlist", "seen", "blocked"]) {
     if (!lists[name] || typeof lists[name] !== "object") lists[name] = {};
   }
 }
@@ -195,7 +200,7 @@ function mediumParams(p) {
 }
 
 // The keyword tags a discover search matched on, re-checked against a loaded
-// movie (for title results and injected favorites, which skip discover).
+// movie (for title results and injected watchlist picks, which skip discover).
 function mediumOk(movie) {
   const m = mediumByKey(search.medium);
   if (!m) return true;
@@ -339,7 +344,7 @@ function crewOk(m) {
 
 // Every filter discover normally applies server-side, re-checked against a
 // fully loaded movie. Needed wherever a candidate didn't come from discover:
-// injected favorites, and title searches (/search/movie takes no filters).
+// injected watchlist picks, and title searches (/search/movie takes no filters).
 function matchesSearch(m) {
   if (!certAllowed(m)) return false;
   const year = parseInt((m.release_date || "").slice(0, 4), 10);
@@ -504,7 +509,7 @@ async function ensureGenres() {
 function excludedIds() {
   return new Set(
     [
-      ...Object.keys(lists.favorites),
+      ...Object.keys(lists.watchlist),
       ...Object.keys(lists.seen),
       ...Object.keys(lists.blocked),
     ].map(Number)
@@ -525,12 +530,12 @@ function shuffle(arr) {
 let pickToken = 0; // ignore stale responses when the user re-searches mid-load
 let announceCount = false; // show a result-count toast after the next fetch (new searches only)
 
-// Favorites are excluded from discover results, so every FAVORITE_EVERY-th
-// pick hands one back deliberately: a random favorite instead of a new movie.
-// It still has to satisfy the current search, so a favorite only turns up
+// The watchlist is excluded from discover results, so every WATCHLIST_EVERY-th
+// pick hands one back deliberately: a random saved movie instead of a new one.
+// It still has to satisfy the current search, so a saved movie only turns up
 // where it would have been a legitimate result anyway.
-const FAVORITE_EVERY = 20;
-const FAVORITE_TRIES = 5; // details fetches spent looking for a qualifying one
+const WATCHLIST_EVERY = 20;
+const WATCHLIST_TRIES = 5; // details fetches spent looking for a qualifying one
 let picksServed = 0;
 
 function servePick(details) {
@@ -538,7 +543,7 @@ function servePick(details) {
   renderMovie(details);
 }
 
-// During a title lookup a favorite has to be one of the movies that lookup
+// During a title lookup a saved movie has to be one of the movies that lookup
 // found — TMDB's own answer to "does this match", typos and all.
 function eligibleForInjection(id) {
   if (!search.title) return true;
@@ -546,18 +551,18 @@ function eligibleForInjection(id) {
 }
 
 // "rendered" | "stale" (a newer pick started) | "none" (fall back to discover)
-async function tryFavoritePick(token) {
+async function tryWatchlistPick(token) {
   // The stored year is enough to drop the obvious misses before spending a
   // request on them; everything else needs the full movie.
   const ids = shuffle(
-    Object.entries(lists.favorites)
+    Object.entries(lists.watchlist)
       .filter(([id, e]) =>
         Number(id) !== lastShownId &&
         eligibleForInjection(Number(id)) &&
         (!settings.fromYear || parseInt(e.year, 10) >= settings.fromYear))
       .map(([id]) => Number(id))
   );
-  for (const id of ids.slice(0, FAVORITE_TRIES)) {
+  for (const id of ids.slice(0, WATCHLIST_TRIES)) {
     let details;
     try {
       details = await fetchMovie(id);
@@ -567,7 +572,7 @@ async function tryFavoritePick(token) {
     if (token !== pickToken) return "stale";
     if (!matchesSearch(details)) continue;
     servePick(details);
-    showToast("One from your favorites ❤", null, 2500);
+    showToast("One from your watchlist", null, 2500);
     return "rendered";
   }
   return "none";
@@ -584,9 +589,9 @@ async function pickMovie() {
     // Not on the first pick of a new search — that one belongs to the search,
     // and owns the result-count toast.
     if (!announceCount &&
-        (picksServed + 1) % FAVORITE_EVERY === 0 &&
-        Object.keys(lists.favorites).length) {
-      const outcome = await tryFavoritePick(token);
+        (picksServed + 1) % WATCHLIST_EVERY === 0 &&
+        Object.keys(lists.watchlist).length) {
+      const outcome = await tryWatchlistPick(token);
       if (outcome !== "none") return;
     }
 
@@ -763,7 +768,7 @@ function renderMovie(m) {
   $("movieTitle").textContent = m.title;
   fillMeta($("movieMeta"), m);
   $("movieGenres").textContent = (m.genres || []).map((g) => g.name).join(" · ");
-  refreshHeart();
+  refreshWatchMark();
 
   showPickState("movie");
   resetSwipe();
@@ -792,8 +797,8 @@ window.addEventListener("resize", () => {
   if (current && !$("card").hidden) applyInfoLayout();
 });
 
-function refreshHeart() {
-  $("btnFav").classList.toggle("active", !!(current && lists.favorites[current.id]));
+function refreshWatchMark() {
+  $("btnWatch").classList.toggle("active", !!(current && lists.watchlist[current.id]));
 }
 
 function listEntry(m) {
@@ -822,21 +827,21 @@ function skipCurrent() {
   pickMovie();
 }
 
-function toggleFavorite() {
+function toggleWatchlist() {
   if (!current) return;
-  if (lists.favorites[current.id]) {
-    delete lists.favorites[current.id];
+  if (lists.watchlist[current.id]) {
+    delete lists.watchlist[current.id];
   } else {
-    lists.favorites[current.id] = listEntry(current);
+    lists.watchlist[current.id] = listEntry(current);
   }
   saveLists();
   refreshCounts();
-  refreshHeart();
+  refreshWatchMark();
 }
 
 function refreshCounts() {
   const n = (o) => Object.keys(o).length;
-  $("cntFavorites").textContent = n(lists.favorites) || "";
+  $("cntWatchlist").textContent = n(lists.watchlist) || "";
   $("cntSeen").textContent = n(lists.seen) || "";
   $("cntBlocked").textContent = n(lists.blocked) || "";
 }
@@ -1421,12 +1426,12 @@ document.addEventListener("fullscreenchange", () => {
 
 // ---------- Card actions & swiping ----------
 
-$("btnFav").addEventListener("click", toggleFavorite);
+$("btnWatch").addEventListener("click", toggleWatchlist);
 
-// Right = favorite, left = block, up = skip, down = seen.
+// Right = watchlist, left = block, up = skip, down = seen.
 // A tap (no drag) on the poster opens More info; a double tap plays the trailer.
 const swipeArea = $("swipeArea");
-const BADGES = ["badgeFav", "badgeSkip", "badgeSeen", "badgeBlock"];
+const BADGES = ["badgeWatch", "badgeSkip", "badgeSeen", "badgeBlock"];
 let drag = null;
 
 function resetSwipe() {
@@ -1473,7 +1478,7 @@ swipeArea.addEventListener("pointermove", (e) => {
   const fade = (v) => Math.min(1, Math.max(0, v / 90));
   if (drag.axis === "x") {
     swipeArea.style.transform = `translateX(${dx}px)`;
-    $("badgeFav").style.opacity = fade(dx);
+    $("badgeWatch").style.opacity = fade(dx);
     $("badgeBlock").style.opacity = fade(-dx);
   } else {
     swipeArea.style.transform = `translateY(${dy}px)`;
@@ -1527,8 +1532,8 @@ function endDrag(e) {
 
   if (axis === "x" && dx > 90) {
     swipeOut("x", 1, () => {
-      if (current && !lists.favorites[current.id]) {
-        lists.favorites[current.id] = listEntry(current);
+      if (current && !lists.watchlist[current.id]) {
+        lists.watchlist[current.id] = listEntry(current);
         saveLists();
         refreshCounts();
       }
@@ -1630,7 +1635,7 @@ $("btnRateSkip").addEventListener("click", navBack);
 // ---------- Saved lists (drawer) ----------
 
 const LIST_LABELS = {
-  favorites: "Favorites",
+  watchlist: "Watchlist",
   seen: "Seen",
   blocked: "Blocked",
 };
@@ -1651,6 +1656,17 @@ function renderList() {
   for (const [id, entry] of entries) {
     ul.appendChild(buildRow(id, entry));
   }
+}
+
+// Moves the entry across, keeping its title, year and poster, then asks for a
+// rating the same way swiping down does.
+function markSeenFromWatchlist(id, entry) {
+  lists.seen[id] = { ...entry };
+  delete lists.watchlist[id];
+  saveLists();
+  refreshCounts();
+  renderList();
+  openRating(id, lists.seen[id]);
 }
 
 function buildRow(id, entry) {
@@ -1687,6 +1703,20 @@ function buildRow(id, entry) {
   }
 
   inner.append(img, text);
+
+  // Watched it after all: the movie moves over to seen and is rated there and
+  // then. Its own tap must not also count as a tap on the row.
+  if (openListName === "watchlist") {
+    const seenBtn = document.createElement("button");
+    seenBtn.className = "row-action";
+    seenBtn.textContent = "Seen";
+    seenBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      markSeenFromWatchlist(id, entry);
+    });
+    inner.appendChild(seenBtn);
+  }
+
   li.appendChild(inner);
 
   // Tap opens the movie; a horizontal drag past the threshold removes it.
