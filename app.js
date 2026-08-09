@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.22.1";
+const APP_VERSION = "2.22.2";
 
 // ---------- State (localStorage) ----------
 
@@ -451,14 +451,29 @@ function queryPoolKey() {
 
 let queryPool = { key: null, movies: [], total: 0 };
 
-// The tags TMDB knows for this word — "zombie", "time travel", "heist". Only
-// names containing the term, so a fuzzy hit can't drag in unrelated movies.
+// The tags TMDB knows for this word — "zombie", "time travel", "dystopia".
+//
+// A tag can be broader than what was typed ("zombie apocalypse" for "zombie")
+// or narrower ("dystopia" for "dystopian"), so containment counts both ways.
+// Requiring the tag to contain the word is what made "dystopian" find nothing
+// at all: TMDB files those under "dystopia". The length floor is what keeps
+// the reverse direction honest — without it "time travel" would match a bare
+// "time" tag and drag in everything under it. Both sides are stripped of
+// punctuation first, so "post-apocalyptic" and "post apocalyptic" agree.
+const TAG_MIN_LEN = 5;
+
+function tagMatchesTerm(name, term) {
+  const tag = titleWords(name).join(" ");
+  const q = titleWords(term).join(" ");
+  if (!tag || !q) return false;
+  return tag.includes(q) || (q.includes(tag) && tag.length >= TAG_MIN_LEN);
+}
+
 async function topicKeywordIds(term) {
   try {
     const r = await tmdbFetch("/search/keyword", { query: term });
-    const wanted = term.toLowerCase();
     return (r.results || [])
-      .filter((k) => k.name.toLowerCase().includes(wanted))
+      .filter((k) => tagMatchesTerm(k.name, term))
       .slice(0, 5)
       .map((k) => k.id);
   } catch {
