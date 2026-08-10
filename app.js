@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.28.0";
+const APP_VERSION = "2.28.1";
 
 // ---------- State (localStorage) ----------
 
@@ -18,8 +18,12 @@ const store = {
   },
 };
 
-// Only the API key, age, and year survive restarts. Advanced filters are per-session.
-let settings = store.load("mp_settings", { apiKey: "", age: null, fromYear: null });
+// The API key is the only thing that outlives the app being closed. A search
+// is for the session it was made in: age, year and every advanced filter start
+// blank again next time, rather than a setting from days ago quietly shaping
+// tonight's picks. Any age or year left in storage by an older version is read
+// and dropped here.
+let settings = { apiKey: String(store.load("mp_settings", {}).apiKey || ""), age: null, fromYear: null };
 let lists = store.load("mp_lists", {});
 normalizeLists();
 
@@ -52,7 +56,7 @@ function normalizeLists() {
   if (changed) saveLists();
 }
 
-function saveSettings() { store.save("mp_settings", settings); }
+function saveSettings() { store.save("mp_settings", { apiKey: settings.apiKey }); }
 function saveLists() { store.save("mp_lists", lists); }
 
 // Session-only search filters (advanced is off by default on every start).
@@ -2132,11 +2136,9 @@ $("fileImport").addEventListener("change", async () => {
     if (!data || typeof data !== "object" || !data.settings || !data.lists) {
       throw new Error("bad shape");
     }
-    settings = {
-      apiKey: String(data.settings.apiKey || ""),
-      age: data.settings.age || null,
-      fromYear: data.settings.fromYear || null,
-    };
+    // Only the key is worth carrying over; a backup's age and year belong to
+    // the session it was taken in, and the reload below would drop them anyway.
+    settings = { apiKey: String(data.settings.apiKey || ""), age: null, fromYear: null };
     lists = data.lists;
     normalizeLists();
     saveSettings();
