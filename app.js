@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.25.1";
+const APP_VERSION = "2.25.2";
 
 // ---------- State (localStorage) ----------
 
@@ -982,14 +982,20 @@ function applyHash() {
   if (!rating && ratingTarget) closeRating();
   document.body.classList.toggle("drawer-open", h === "menu");
 
+  // Where the open list is sitting, banked before anything moves it, so
+  // opening a movie and coming back lands on the same row.
+  const listEl = $("modalList");
+  if (!listEl.hidden && openListName) listScroll[openListName] = listEl.scrollTop;
+
   const listName = h.startsWith("list-") ? h.slice(5) : null;
   if (listName && LIST_LABELS[listName]) {
     if (openListName !== listName) {
       openListName = listName;
       $("listTitle").textContent = LIST_LABELS[listName];
     }
+    setShown("modalList", true); // unhidden first, or the scroll won't take
     renderList();
-    setShown("modalList", true);
+    listEl.scrollTop = listScroll[listName] || 0;
   } else {
     setShown("modalList", false);
   }
@@ -1770,6 +1776,7 @@ const LIST_LABELS = {
 };
 
 let openListName = null;
+const listScroll = {}; // where each list was left, by list name
 
 document.querySelectorAll(".drawer-item[data-list]").forEach((btn) => {
   btn.addEventListener("click", () => navPush("list-" + btn.dataset.list));
@@ -1779,12 +1786,16 @@ $("drawerSettings").addEventListener("click", () => openSettings());
 
 function renderList() {
   const ul = $("listItems");
+  // Emptying the element scrolls it to the top, so removing a row or coming
+  // back from a rating would otherwise throw the reader back to the start.
+  const at = $("modalList").scrollTop;
   ul.innerHTML = "";
   const entries = Object.entries(lists[openListName]);
   $("listEmpty").hidden = entries.length > 0;
   for (const [id, entry] of entries) {
     ul.appendChild(buildRow(id, entry));
   }
+  $("modalList").scrollTop = at;
 }
 
 // Moves the entry across, keeping its title, year and poster, then asks for a
