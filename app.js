@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.27.0";
+const APP_VERSION = "2.28.0";
 
 // ---------- State (localStorage) ----------
 
@@ -629,7 +629,7 @@ async function pickFromQuery(token) {
     if (token !== pickToken) return;
     sessionShown.add(movie.id); // rejected ones too, so we don't refetch them
     if (!matchesSearch(details)) continue;
-    renderMovie(details);
+    servePick(details);
     return;
   }
   showPickError("You've been through every match for this search. Try widening it.");
@@ -741,7 +741,7 @@ async function pickMovie() {
           if (token !== pickToken) return "stale";
           sessionShown.add(movie.id); // cert-rejected too, so we don't refetch them
           if (!verifyPick(details)) continue;
-          renderMovie(details);
+          servePick(details);
           return "served";
         }
         return "none";
@@ -786,7 +786,7 @@ async function pickMovie() {
         const details = await fetchMovie(movie.id);
         if (token !== pickToken) return;
         if (!verifyPick(details)) continue;
-        renderMovie(details);
+        servePick(details);
         return;
       }
     }
@@ -870,7 +870,49 @@ function fillMeta(el, m) {
   el.appendChild(document.createTextNode(metaParts(m).join(" · ")));
 }
 
+// Every movie shown is kept, so stepping back through the picks doesn't
+// refetch them. Bounded — a long session would otherwise hold hundreds.
+const movieCache = new Map();
+const MOVIE_CACHE_MAX = 80;
+
+function rememberMovie(m) {
+  movieCache.delete(m.id); // re-insert so the freshest sit at the end
+  movieCache.set(m.id, m);
+  if (movieCache.size > MOVIE_CACHE_MAX) {
+    movieCache.delete(movieCache.keys().next().value);
+  }
+}
+
+// A pick is somewhere you've been: it takes a history entry of its own, so
+// back returns to the movie before it and, eventually, to whatever started
+// the rotation — a search, a list, or another movie's details.
+function servePick(details) {
+  renderMovie(details);
+  navPushMovie(details.id);
+}
+
+// Back to a movie already shown. Cached ones are instant; one that has aged
+// out of the cache is fetched again.
+async function restoreMovie(id) {
+  const token = ++pickToken; // a pick still loading is no longer wanted
+  const cached = movieCache.get(id);
+  if (cached) {
+    renderMovie(cached);
+    return;
+  }
+  showPickState("loading");
+  try {
+    const details = await fetchMovie(id);
+    if (token !== pickToken) return;
+    renderMovie(details);
+  } catch (err) {
+    if (token !== pickToken) return;
+    showPickError(err.message || "Couldn't load that movie.");
+  }
+}
+
 function renderMovie(m) {
+  rememberMovie(m);
   current = m;
   sessionShown.add(m.id);
 
@@ -993,14 +1035,25 @@ function navReplace(frag) {
   applyHash();
 }
 
-function navBack() {
-  if (((history.state && history.state.depth) || 0) > 0) history.back();
+// A pick's own entry, named by the movie it shows so back can restore it.
+// The entry that starts a rotation is a placeholder — the loading spinner
+// standing in for a movie not chosen yet — and the first pick takes it over
+// rather than stacking on top, so back from that first movie reaches whatever
+// started it: the search screen, a list, another movie's details.
+function navPushMovie(id) {
+  const st = history.state || {};
+  const depth = st.depth || 0;
+  const placeholder = !st.movieId && (location.hash === "#movie" || depth === 0);
+  if (placeholder) {
+    history.replaceState({ depth, movieId: id }, "", "#movie");
+  } else {
+    history.pushState({ depth: depth + 1, movieId: id }, "", "#movie");
+  }
+  applyHash();
 }
 
-// Pop every overlay entry at once (e.g. opening a movie from a list).
-function navHome() {
-  const depth = (history.state && history.state.depth) || 0;
-  if (depth > 0) history.go(-depth);
+function navBack() {
+  if (((history.state && history.state.depth) || 0) > 0) history.back();
 }
 
 function setShown(id, shown) {
@@ -1055,6 +1108,10 @@ function applyHash() {
   }
 
   document.body.classList.toggle("no-scroll", MODALS.some((id) => !$(id).hidden));
+
+  // Stepping back through the picks: the entry says which movie it showed.
+  const wantId = history.state && history.state.movieId;
+  if (wantId && (!current || current.id !== wantId)) restoreMovie(wantId);
 }
 
 window.addEventListener("popstate", applyHash);
@@ -1373,7 +1430,9 @@ $("btnApplySearch").addEventListener("click", async () => {
     }
     sessionShown.clear();
     announceCount = true;
-    navBack();
+    // Not navBack: the search screen stays in history, so back from the
+    // rotation it starts returns to it.
+    navPush("movie");
     show("screen-pick");
     pickMovie();
   } catch (err) {
@@ -1484,7 +1543,7 @@ function startRelated(m) {
   search.relatedTitle = m.title;
   sessionShown.clear();
   announceCount = true;
-  navHome();
+  navPush("movie"); // the details screen stays behind it
   show("screen-pick");
   pickMovie();
 }
@@ -1521,7 +1580,7 @@ function forceSearchFor(kind, id, name) {
   saveSettings();
   sessionShown.clear();
   announceCount = true;
-  navHome();
+  navPush("movie"); // whatever was on screen stays behind it
   show("screen-pick");
   pickMovie();
 }

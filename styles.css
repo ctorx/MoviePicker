@@ -478,6 +478,11 @@ button:active { transform: scale(0.98); }
 }
 .ext-btn svg { width: 16px; height: 16px; }
 
+/* Trailer and Similar share a line; the wrap catches narrow screens. */
+.info-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
+.info-actions .trailer-btn,
+.info-actions .ext-btn { margin-top: 0; }
+
 /* Stays in the app rather than leaving it, so it reads as an action. */
 .related-btn { border-color: var(--accent); color: var(--accent); }
 
