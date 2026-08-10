@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.28.1";
+const APP_VERSION = "2.29.0";
 
 // ---------- State (localStorage) ----------
 
@@ -18,12 +18,12 @@ const store = {
   },
 };
 
-// The API key is the only thing that outlives the app being closed. A search
-// is for the session it was made in: age, year and every advanced filter start
-// blank again next time, rather than a setting from days ago quietly shaping
-// tonight's picks. Any age or year left in storage by an older version is read
-// and dropped here.
-let settings = { apiKey: String(store.load("mp_settings", {}).apiKey || ""), age: null, fromYear: null };
+// The API key is the only thing that outlives the app being closed, and now
+// the only thing stored at all. A search is for the session it was made in:
+// the rating cap, the year and every advanced filter start blank next time,
+// rather than a setting from days ago quietly shaping tonight's picks.
+// Whatever an older version left alongside the key is read past and dropped.
+let settings = { apiKey: String(store.load("mp_settings", {}).apiKey || "") };
 let lists = store.load("mp_lists", {});
 normalizeLists();
 
@@ -65,6 +65,9 @@ const search = {
   queryMode: "title", // "title", or "anything" for titles plus topic tags
   relatedId: null, // rotating through one movie's recommendations
   relatedTitle: "",
+  browse: "", // "popular" or "recent" — a ready-made list instead of a search
+  maxCert: "", // highest US rating allowed; "" is no limit
+  fromYear: null,
   advanced: false,
   genres: new Set(),
   genreMode: "all", // "all" = must have every selected genre, "any" = at least one
@@ -86,10 +89,6 @@ const search = {
   englishOnly: false,
   maxRuntime: 0, // 0 = no limit
 };
-
-function effectiveAge() {
-  return settings.age || 21; // blank age searches as an adult-but-not-R+ default
-}
 
 // ---------- TMDB API ----------
 
@@ -125,13 +124,6 @@ function fetchMovie(id) {
 // US certifications allowed for the youngest viewer's age.
 const CERT_RANK = { G: 0, PG: 1, "PG-13": 2, R: 3, "NC-17": 4 };
 
-function certForAge(age) {
-  if (age < 8) return "G";
-  if (age < 13) return "PG";
-  if (age < 17) return "PG-13";
-  return "R";
-}
-
 function certOf(m) {
   const us = (m.release_dates?.results || []).find((r) => r.iso_3166_1 === "US");
   const withCert = (us?.release_dates || []).find((d) => d.certification);
@@ -140,11 +132,12 @@ function certOf(m) {
 
 // TMDB's certification.lte filter leaks unrated and miscertified titles, so
 // every pick is re-checked against the movie's real US certification below.
+// No cap means no check. With one, a movie TMDB has no US rating for is left
+// out: an unknown rating can't be shown to have cleared the bar.
 function certAllowed(m) {
-  if (effectiveAge() >= 17) return true;
+  if (!search.maxCert) return true;
   const cert = certOf(m);
-  const max = CERT_RANK[certForAge(effectiveAge())];
-  return cert in CERT_RANK && CERT_RANK[cert] <= max;
+  return cert in CERT_RANK && CERT_RANK[cert] <= CERT_RANK[search.maxCert];
 }
 
 // ---------- Production format ----------
@@ -305,15 +298,17 @@ const MIN_SCORE = 6;
 
 function discoverParams(page) {
   const p = {
-    certification_country: "US",
-    "certification.lte": certForAge(effectiveAge()),
     sort_by: "popularity.desc",
     include_adult: "false",
     "vote_count.gte": String(MIN_VOTES), // enough votes that the score means something
     "vote_average.gte": String(MIN_SCORE), // quality floor so picks are watchable
     page: String(page),
   };
-  if (settings.fromYear) p["primary_release_date.gte"] = settings.fromYear + "-01-01";
+  if (search.maxCert) {
+    p.certification_country = "US";
+    p["certification.lte"] = search.maxCert;
+  }
+  if (search.fromYear) p["primary_release_date.gte"] = search.fromYear + "-01-01";
   if (search.advanced) {
     if (search.genres.size) {
       // TMDB reads a comma as AND and a pipe as OR. Every other filter
@@ -328,12 +323,6 @@ function discoverParams(page) {
       // Personal filmographies are small; the popularity floors would empty them out.
       p["vote_count.gte"] = "10";
       delete p["vote_average.gte"];
-      if (effectiveAge() >= 17) {
-        // The certification join excludes anything TMDB has no US rating for,
-        // which guts person searches. Adults don't need it (picks are verified).
-        delete p.certification_country;
-        delete p["certification.lte"];
-      }
     }
     // A film matches if the studio is any one of its production companies,
     // and if several were typed, any one of those counts.
@@ -371,7 +360,7 @@ function crewOk(m) {
 function matchesSearch(m) {
   if (!certAllowed(m)) return false;
   const year = parseInt((m.release_date || "").slice(0, 4), 10);
-  if (settings.fromYear && !(year >= settings.fromYear)) return false;
+  if (search.fromYear && !(year >= search.fromYear)) return false;
   if (!search.advanced) return true;
   if (search.genres.size) {
     const ids = (m.genres || []).map((g) => g.id);
@@ -409,7 +398,7 @@ function verifyPick(m) {
 const broadSearch = () => !!search.query && search.queryMode === "anything";
 
 // Either of these replaces discover with a pool of its own.
-const fixedPool = () => !!search.query || !!search.relatedId;
+const fixedPool = () => !!search.query || !!search.relatedId || !!search.browse;
 
 // Order means nothing in a pool that gets shuffled, but what's in it does.
 // Neither TMDB's search nor its recommendations carry a quality floor, so
@@ -461,6 +450,7 @@ function byMatchThenRelease(query) {
 // stepping through a series costs one request per movie, not five. In broad
 // mode the filters shape the tag half of the pool, so they belong in the key.
 function queryPoolKey() {
+  if (search.browse) return "browse:" + search.browse + ":" + search.maxCert;
   if (search.relatedId) return "related:" + search.relatedId;
   return broadSearch()
     ? "any:" + search.query.toLowerCase() + ":" + JSON.stringify(discoverParams(1))
@@ -517,9 +507,49 @@ async function topicKeywordIds(term) {
     .map(([id]) => id);
 }
 
+const RECENT_MONTHS = 6;
+
+// The request behind whichever ready-made list is showing.
+function browsePage(page) {
+  if (search.browse !== "recent") {
+    return ["/movie/popular", { page: String(page) }];
+  }
+  const until = new Date();
+  const from = new Date(until.getFullYear(), until.getMonth() - RECENT_MONTHS, until.getDate());
+  const day = (d) => d.toISOString().slice(0, 10);
+  const params = {
+    include_adult: "false",
+    sort_by: "popularity.desc",
+    "primary_release_date.gte": day(from),
+    "primary_release_date.lte": day(until),
+    "vote_count.gte": "50", // low enough for a new release, high enough to sift
+    page: String(page),
+  };
+  if (search.maxCert) {
+    params.certification_country = "US";
+    params["certification.lte"] = search.maxCert;
+  }
+  return ["/discover/movie", params];
+}
+
 async function ensureQueryPool(token) {
   const key = queryPoolKey();
   if (queryPool.key === key) return true;
+
+  // Ready-made lists. Popular is TMDB's own; recent is a discover search over
+  // the last few months, because TMDB's now_playing list isn't what its name
+  // suggests — it hands back films years old alongside this month's.
+  if (search.browse) {
+    const found = [];
+    for (let page = 1; page <= 3; page++) {
+      const data = await tmdbFetch(...browsePage(page));
+      if (token !== pickToken) return false;
+      found.push(...data.results);
+      if (page >= data.total_pages) break;
+    }
+    queryPool = { key, movies: found, total: found.length };
+    return true;
+  }
 
   // TMDB's own recommendations: what people who liked this one went on to
   // like. Three pages is plenty — the tail gets thin.
@@ -612,8 +642,9 @@ async function pickFromQuery(token) {
   const excluded = excludedIds();
   const usable = queryPool.movies.filter((m) => m.poster_path && !excluded.has(m.id));
   if (!usable.length) {
-    showPickError(search.relatedId
-      ? 'Nothing left that TMDB relates to "' + search.relatedTitle + '".'
+    showPickError(
+      search.browse ? "Nothing left in that list to show you."
+      : search.relatedId ? 'Nothing left that TMDB relates to "' + search.relatedTitle + '".'
       : 'No movies found for "' + search.query + '". Check the spelling, or try fewer words.');
     return;
   }
@@ -626,7 +657,7 @@ async function pickFromQuery(token) {
   // A title walks its series in release order. A subject has no order to walk,
   // so it's shuffled — the same word shouldn't hand back the same movie first
   // every time it's searched.
-  if (broadSearch() || search.relatedId) shuffle(fresh);
+  if (broadSearch() || search.relatedId || search.browse) shuffle(fresh);
 
   for (const movie of fresh) {
     const details = await fetchMovie(movie.id);
@@ -641,12 +672,14 @@ async function pickFromQuery(token) {
 
 function searchSummary() {
   const bits = [];
+  if (search.browse === "popular") bits.push("popular right now");
+  if (search.browse === "recent") bits.push("out in the last " + RECENT_MONTHS + " months");
   if (search.relatedId) bits.push('like "' + search.relatedTitle + '"');
   if (search.query) {
     bits.push((broadSearch() ? 'about "' : 'matching "') + search.query + '"');
   }
-  if (effectiveAge() < 17) bits.push("rated " + certForAge(effectiveAge()) + " or under");
-  if (settings.fromYear) bits.push(settings.fromYear + " and newer");
+  if (search.maxCert) bits.push("rated " + search.maxCert + " or under");
+  if (search.fromYear) bits.push(search.fromYear + " and newer");
   if (search.advanced) {
     if (search.genres.size && genreCache) {
       const names = genreCache.filter((g) => search.genres.has(g.id)).map((g) => g.name);
@@ -1134,13 +1167,6 @@ $("drawerOverlay").addEventListener("click", navBack);
 
 // ---------- Search ----------
 
-function updateCertHint() {
-  const age = parseInt($("inpAge").value, 10);
-  $("certHint").textContent = Number.isFinite(age) && age > 0
-    ? `Movies rated up to ${certForAge(age)} will be included.`
-    : "Blank = 21 (movies rated up to R).";
-}
-
 function buildRuntimeOptions() {
   const sel = $("selRuntime");
   sel.innerHTML = "";
@@ -1276,9 +1302,9 @@ function resetSearch() {
   search.maxRuntime = 0;
   // Age and year outlive the session, so clearing them has to stick even if
   // the user closes the search screen without applying.
-  settings.age = null;
-  settings.fromYear = null;
-  saveSettings();
+  search.maxCert = "";
+  search.fromYear = null;
+  search.browse = "";
   fillSearchForm();
   showToast("Search reset to defaults", null, 2000);
 }
@@ -1286,8 +1312,8 @@ function resetSearch() {
 function fillSearchForm() {
   $("inpQuery").value = search.query;
   renderQueryMode();
-  $("inpAge").value = settings.age || "";
-  $("inpYear").value = settings.fromYear || "";
+  $("selMaxCert").value = search.maxCert;
+  $("inpYear").value = search.fromYear || "";
   $("chkAdvanced").checked = search.advanced;
   $("advancedBox").hidden = !search.advanced;
   $("inpActors").value = search.actors;
@@ -1303,7 +1329,6 @@ function fillSearchForm() {
     renderGenreChips();
     renderMediumChips();
   }
-  updateCertHint();
   $("searchError").hidden = true;
 }
 
@@ -1312,10 +1337,11 @@ function openSearch() {
   navPush("search");
 }
 
+$("btnPopular").addEventListener("click", () => startBrowse("popular"));
+$("btnRecent").addEventListener("click", () => startBrowse("recent"));
 $("btnResetSearch").addEventListener("click", resetSearch);
 $("btnSearch").addEventListener("click", openSearch);
 $("btnErrorSearch").addEventListener("click", openSearch);
-$("inpAge").addEventListener("input", updateCertHint);
 
 $("chkAdvanced").addEventListener("change", () => {
   $("advancedBox").hidden = !$("chkAdvanced").checked;
@@ -1369,31 +1395,25 @@ $("btnApplySearch").addEventListener("click", async () => {
   errEl.hidden = true;
 
   const thisYear = new Date().getFullYear();
-  const age = $("inpAge").value.trim() ? parseInt($("inpAge").value, 10) : null;
   const year = $("inpYear").value.trim() ? parseInt($("inpYear").value, 10) : null;
 
-  if (age !== null && (!Number.isFinite(age) || age < 1 || age > 120)) {
-    errEl.textContent = "Enter the youngest viewer's age (1–120), or leave it blank for 21.";
-    errEl.hidden = false;
-    return;
-  }
   if (year !== null && (!Number.isFinite(year) || year < 1930 || year > thisYear)) {
     errEl.textContent = `Enter a year between 1930 and ${thisYear}, or leave it blank for all time.`;
     errEl.hidden = false;
     return;
   }
 
-  settings.age = age;
-  settings.fromYear = year;
-  saveSettings();
-
   search.query = $("inpQuery").value.trim();
-  search.relatedId = null; // a new search leaves any related rotation
+  // A search of one's own leaves any ready-made rotation behind.
+  search.relatedId = null;
+  search.browse = "";
   search.advanced = $("chkAdvanced").checked;
   const btn = $("btnApplySearch");
   btn.disabled = true;
   try {
     if (search.advanced) {
+      search.maxCert = $("selMaxCert").value;
+      search.fromYear = year;
       search.actors = $("inpActors").value;
       search.director = $("inpDirector").value;
       search.composer = $("inpComposer").value;
@@ -1423,6 +1443,10 @@ $("btnApplySearch").addEventListener("click", async () => {
       search.studioIds = studios.ids;
       search.studioNames = studios.resolved;
     } else {
+      // The box is where these live now, so an unticked box means no cap and
+      // no year — never a limit still in force that nothing on screen shows.
+      search.maxCert = "";
+      search.fromYear = null;
       search.actorIds = [];
       search.actorNames = [];
       search.directorIds = [];
@@ -1540,7 +1564,21 @@ function openInfo(replace) {
 // they'd narrow an already narrow pool to nothing — but the age rating and
 // year stay, since those were set deliberately and one of them is why the
 // picks are safe for whoever is watching.
+// The two ready-made rotations from the search screen.
+function startBrowse(kind) {
+  search.query = "";
+  search.relatedId = null;
+  search.browse = kind;
+  search.advanced = false; // a curated list isn't a search to be narrowed
+  sessionShown.clear();
+  announceCount = true;
+  navPush("movie"); // the search screen stays behind it
+  show("screen-pick");
+  pickMovie();
+}
+
 function startRelated(m) {
+  search.browse = "";
   search.query = "";
   search.advanced = false;
   search.relatedId = m.id;
@@ -1559,6 +1597,7 @@ function forceSearchFor(kind, id, name) {
   search.query = "";
   search.queryMode = "title";
   search.relatedId = null;
+  search.browse = "";
   search.genres.clear();
   search.genreMode = "all";
   search.medium = "";
@@ -1579,9 +1618,8 @@ function forceSearchFor(kind, id, name) {
   } else {
     search.composer = name; search.composerIds = [id]; search.composerNames = [name];
   }
-  settings.age = null;
-  settings.fromYear = null;
-  saveSettings();
+  search.maxCert = "";
+  search.fromYear = null;
   sessionShown.clear();
   announceCount = true;
   navPush("movie"); // whatever was on screen stays behind it
@@ -2136,9 +2174,9 @@ $("fileImport").addEventListener("change", async () => {
     if (!data || typeof data !== "object" || !data.settings || !data.lists) {
       throw new Error("bad shape");
     }
-    // Only the key is worth carrying over; a backup's age and year belong to
+    // Only the key is worth carrying over; a backup's search values belong to
     // the session it was taken in, and the reload below would drop them anyway.
-    settings = { apiKey: String(data.settings.apiKey || ""), age: null, fromYear: null };
+    settings = { apiKey: String(data.settings.apiKey || "") };
     lists = data.lists;
     normalizeLists();
     saveSettings();

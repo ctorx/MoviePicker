@@ -100,13 +100,12 @@
       <p class="hint">TMDB can only search titles, so "Anything" reaches the rest through its
         topic tags. Everything below still applies either way.</p>
 
-      <label for="inpAge">How old is the <strong>youngest</strong> person watching?</label>
-      <input id="inpAge" type="number" min="1" max="120" inputmode="numeric" placeholder="blank = 21">
-      <p class="hint" id="certHint"></p>
-
-      <label for="inpYear"><strong>Oldest year</strong> to draw from</label>
-      <input id="inpYear" type="number" min="1930" inputmode="numeric" placeholder="blank = all time">
-      <p class="hint">Movies from this year and newer are fair game. Blank means no limit.</p>
+      <div class="browse-row">
+        <button id="btnPopular" class="browse-btn" type="button">Popular movies</button>
+        <button id="btnRecent" class="browse-btn" type="button">Browse recent movies</button>
+      </div>
+      <p class="hint">Straight to a rotation of what's popular on TMDB, or what's come out
+        in the last six months. Any rating limit set below still applies.</p>
 
       <label class="toggle-row">
         <input type="checkbox" id="chkAdvanced">
@@ -114,6 +113,22 @@
       </label>
 
       <div id="advancedBox" hidden>
+        <label for="selMaxCert">Maximum rating allowed</label>
+        <select id="selMaxCert">
+          <option value="">Any rating</option>
+          <option value="G">G</option>
+          <option value="PG">PG</option>
+          <option value="PG-13">PG-13</option>
+          <option value="R">R</option>
+          <option value="NC-17">NC-17</option>
+        </select>
+        <p class="hint">US ratings. Setting one also leaves out movies TMDB has no US rating
+          for, since there's no telling whether those clear it.</p>
+
+        <label for="inpYear"><strong>Oldest year</strong> to draw from</label>
+        <input id="inpYear" type="number" min="1930" inputmode="numeric" placeholder="blank = all time">
+        <p class="hint">Movies from this year and newer are fair game. Blank means no limit.</p>
+
         <div class="label-row">
           <label>Genres</label>
           <div id="genreMode" class="seg" role="group" aria-label="Genre matching">
