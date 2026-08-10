@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.32.0";
+const APP_VERSION = "2.32.1";
 
 // ---------- State (localStorage) ----------
 
@@ -399,6 +399,11 @@ function verifyPick(m) {
 
 const broadSearch = () => !!search.query && search.queryMode === "anything";
 
+// Naming a movie is asking for that movie. Whether it's already on a list
+// doesn't come into it — being told there are no matches for a title you can
+// see in your own watchlist would just look broken.
+const titleLookup = () => !!search.query && search.queryMode === "title";
+
 // Either of these replaces discover with a pool of its own.
 const fixedPool = () => !!search.query || !!search.relatedId || !!search.browse;
 
@@ -639,9 +644,9 @@ async function pickFromQuery(token) {
     }
   }
 
-  // Saved, seen or blocked, it's spoken for and stays out of the picks — a
-  // query's results included.
-  const excluded = excludedIds();
+  // Saved, seen or blocked, it's spoken for and stays out of the picks — but
+  // never out of a title lookup, which is someone asking for one movie by name.
+  const excluded = titleLookup() ? new Set() : excludedIds();
   const usable = queryPool.movies.filter((m) => m.poster_path && !excluded.has(m.id));
   if (!usable.length) {
     showPickError(
@@ -1225,7 +1230,7 @@ function renderQueryMode() {
     ? "Anything: titles plus TMDB's topic tags, with anything whose description "
       + "mentions the word ranked above the rest."
     : "Title: closest matches first, then oldest to newest — \"Harry Potter\" "
-      + "walks the series in order.";
+      + "walks the series in order. Finds movies already on your lists.";
 }
 
 $("queryMode").addEventListener("click", (e) => {
