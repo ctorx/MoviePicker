@@ -258,6 +258,21 @@
     </div>
     <div class="modal-body">
       <p class="hint">Tap a movie to open it · swipe left to remove</p>
+
+      <div class="list-tools">
+        <select id="selListSort" aria-label="Sort by"></select>
+        <button id="btnListFilter" class="icon-btn" type="button" title="Filter by title">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16l-6.2 7.2V19l-3.6 2v-8.8z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
+
+      <div id="listFilterWrap" class="filter-wrap" hidden>
+        <input id="inpListFilter" type="text" autocomplete="off" placeholder="Filter by title">
+        <button id="btnClearFilter" class="filter-clear" type="button" title="Clear filter">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+
       <ul id="listItems" class="movie-list"></ul>
       <p id="listEmpty" class="hint center" hidden>Nothing here yet.</p>
     </div>

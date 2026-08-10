@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.31.0";
+const APP_VERSION = "2.32.0";
 
 // ---------- State (localStorage) ----------
 
@@ -1131,6 +1131,7 @@ function applyHash() {
       $("listTitle").textContent = LIST_LABELS[listName];
     }
     setShown("modalList", true); // unhidden first, or the scroll won't take
+    buildListTools();
     renderList();
     listEl.scrollTop = listScroll[listName] || 0;
   } else {
@@ -2006,6 +2007,64 @@ document.querySelectorAll(".drawer-item[data-list]").forEach((btn) => {
 
 $("drawerSettings").addEventListener("click", () => openSettings());
 
+// Sorting and filtering are per list and last the session, the way a list's
+// scroll position does — the watchlist keeping its own order while seen keeps
+// another is less surprising than one setting following you between them.
+const listSort = {};
+const listFilter = {};
+
+const SORTS = [
+  { key: "", label: "Order added" },
+  { key: "title-az", label: "By title A–Z" },
+  { key: "title-za", label: "By title Z–A" },
+  { key: "year-old", label: "By year — oldest first" },
+  { key: "year-new", label: "By year — newest first" },
+  { key: "rating-high", label: "Highest rated", seenOnly: true },
+  { key: "rating-low", label: "Lowest rated", seenOnly: true },
+];
+
+const rowTitle = (r) => r[1].title || "";
+const rowYear = (r) => parseInt(r[1].year, 10) || 0;
+const rowRating = (r) => r[1].rating || 0;
+const byTitle = (a, b) => rowTitle(a).localeCompare(rowTitle(b), undefined, { sensitivity: "base" });
+
+function sortRows(rows, mode) {
+  const out = [...rows];
+  if (mode === "title-az") out.sort(byTitle);
+  else if (mode === "title-za") out.sort((a, b) => byTitle(b, a));
+  else if (mode === "year-old") out.sort((a, b) => rowYear(a) - rowYear(b) || byTitle(a, b));
+  else if (mode === "year-new") out.sort((a, b) => rowYear(b) - rowYear(a) || byTitle(a, b));
+  else if (mode === "rating-high") out.sort((a, b) => rowRating(b) - rowRating(a) || byTitle(a, b));
+  else if (mode === "rating-low") {
+    // An unrated movie isn't the lowest rated one; it has no rating at all,
+    // so those sit at the end of either direction.
+    out.sort((a, b) => {
+      const ra = rowRating(a), rb = rowRating(b);
+      if (!ra !== !rb) return ra ? -1 : 1;
+      return ra - rb || byTitle(a, b);
+    });
+  }
+  return out;
+}
+
+// The sort choices for the list on screen, and the filter box as it was left.
+function buildListTools() {
+  const sel = $("selListSort");
+  sel.innerHTML = "";
+  for (const s of SORTS) {
+    if (s.seenOnly && openListName !== "seen") continue;
+    const o = document.createElement("option");
+    o.value = s.key;
+    o.textContent = s.label;
+    sel.appendChild(o);
+  }
+  sel.value = listSort[openListName] || "";
+  const term = listFilter[openListName] || "";
+  $("inpListFilter").value = term;
+  $("listFilterWrap").hidden = !term;
+  $("btnListFilter").classList.toggle("active", !!term);
+}
+
 function renderList() {
   const ul = $("listItems");
   // Emptying the element scrolls it to the top, so removing a row or coming
@@ -2013,12 +2072,56 @@ function renderList() {
   const at = $("modalList").scrollTop;
   ul.innerHTML = "";
   const entries = Object.entries(lists[openListName]);
-  $("listEmpty").hidden = entries.length > 0;
-  for (const [id, entry] of entries) {
+  const term = (listFilter[openListName] || "").trim().toLowerCase();
+  const matching = term
+    ? entries.filter(([, e]) => (e.title || "").toLowerCase().includes(term))
+    : entries;
+  const rows = sortRows(matching, listSort[openListName] || "");
+
+  $("listEmpty").textContent = entries.length
+    ? "Nothing here matches “" + term + "”."
+    : "Nothing here yet.";
+  $("listEmpty").hidden = rows.length > 0;
+  for (const [id, entry] of rows) {
     ul.appendChild(buildRow(id, entry));
   }
   $("modalList").scrollTop = at;
 }
+
+$("selListSort").addEventListener("change", () => {
+  listSort[openListName] = $("selListSort").value;
+  $("modalList").scrollTop = 0; // a new order is a new list to read
+  renderList();
+});
+
+// The box appears on the icon and goes away with it, taking the filter with
+// it — a list left quietly filtered behind a hidden box reads as a lost list.
+$("btnListFilter").addEventListener("click", () => {
+  const wrap = $("listFilterWrap");
+  const opening = wrap.hidden;
+  wrap.hidden = !opening;
+  $("btnListFilter").classList.toggle("active", opening);
+  if (opening) {
+    $("inpListFilter").focus();
+  } else {
+    listFilter[openListName] = "";
+    $("inpListFilter").value = "";
+    renderList();
+  }
+});
+
+$("inpListFilter").addEventListener("input", () => {
+  listFilter[openListName] = $("inpListFilter").value;
+  $("modalList").scrollTop = 0;
+  renderList();
+});
+
+$("btnClearFilter").addEventListener("click", () => {
+  listFilter[openListName] = "";
+  $("inpListFilter").value = "";
+  $("inpListFilter").focus();
+  renderList();
+});
 
 // Moves the entry across, keeping its title, year and poster, then asks for a
 // rating the same way swiping down does.

@@ -550,6 +550,31 @@ button:active { transform: scale(0.98); }
 .trailer-frame iframe { flex: 1; width: 100%; border: 0; }
 
 /* Saved lists */
+.list-tools { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+.list-tools select { flex: 1; padding: 10px; font-size: 0.95rem; }
+.list-tools .icon-btn {
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 9px 11px;
+  color: var(--muted);
+}
+.list-tools .icon-btn.active { color: var(--accent); border-color: var(--accent); }
+
+.filter-wrap { position: relative; margin-top: 8px; }
+.filter-wrap input { padding-right: 46px; font-size: 1rem; }
+.filter-clear {
+  position: absolute;
+  right: 3px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  padding: 10px;
+  color: var(--muted);
+  line-height: 0;
+}
+.filter-clear svg { width: 18px; height: 18px; display: block; }
+
 .movie-list { list-style: none; margin: 12px 0 0; padding: 0; }
 
 .movie-row {
