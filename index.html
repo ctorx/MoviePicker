@@ -171,6 +171,17 @@
           <input type="checkbox" id="chkEnglish">
           <span>English-language only</span>
         </label>
+
+        <label class="toggle-row">
+          <input type="checkbox" id="chkIncludeSeen">
+          <span>Include movies you've seen</span>
+        </label>
+
+        <label class="toggle-row">
+          <input type="checkbox" id="chkIncludeWatchlist">
+          <span>Include movies on your watchlist</span>
+        </label>
+        <p class="hint">Both are left out otherwise. Blocked movies stay out either way.</p>
         <p class="hint">Leaves out foreign-language movies. TMDB publishes nothing about
           dubbing, so this goes by the movie's own language — it can't tell whether an
           English dub exists.</p>
@@ -223,7 +234,7 @@
         <p id="infoCast" class="hint"></p>
         <div id="infoExtra" class="info-extra"></div>
 
-        <div id="watchlistActions" class="watchlist-actions" hidden>
+        <div id="listActions" class="list-actions" hidden>
           <button id="btnWatchedIt" class="half-btn watched-btn" type="button">Watched it</button>
           <button id="btnRemoveFromList" class="half-btn remove-btn" type="button">Remove</button>
         </div>

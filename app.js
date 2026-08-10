@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.30.1";
+const APP_VERSION = "2.31.0";
 
 // ---------- State (localStorage) ----------
 
@@ -87,6 +87,8 @@ const search = {
   budget: "", // MONEY range key, "" = any
   revenue: "",
   englishOnly: false,
+  includeSeen: false, // lists are held out of picks unless asked for
+  includeWatchlist: false,
   maxRuntime: 0, // 0 = no limit
 };
 
@@ -693,6 +695,8 @@ function searchSummary() {
     if (budgetRange()) bits.push("budget " + budgetRange().label.toLowerCase());
     if (revenueRange()) bits.push("box office " + revenueRange().label.toLowerCase());
     if (search.englishOnly) bits.push("English-language");
+    if (search.includeSeen) bits.push("including ones you've seen");
+    if (search.includeWatchlist) bits.push("including your watchlist");
     if (search.maxRuntime) bits.push("under " + runtimeText(search.maxRuntime));
   }
   return bits.join(" · ");
@@ -706,14 +710,13 @@ async function ensureGenres() {
 
 // ---------- Picking ----------
 
+// Blocked is always out. Seen and the watchlist are too, unless the search
+// asks for them back.
 function excludedIds() {
-  return new Set(
-    [
-      ...Object.keys(lists.watchlist),
-      ...Object.keys(lists.seen),
-      ...Object.keys(lists.blocked),
-    ].map(Number)
-  );
+  const ids = [...Object.keys(lists.blocked)];
+  if (!search.includeSeen) ids.push(...Object.keys(lists.seen));
+  if (!search.includeWatchlist) ids.push(...Object.keys(lists.watchlist));
+  return new Set(ids.map(Number));
 }
 
 let lastShownId = null; // keeps a literal skip from re-serving the same movie immediately
@@ -1169,21 +1172,23 @@ $("btnInfoBack").addEventListener("click", navBack);
 // Watched it and Remove, on the details of something on the watchlist. Both
 // finish by going back to the list — the movie has just left it, so there's
 // nothing on the details screen still worth reading.
-function watchlistEntryOnShow() {
+// The movie on screen as it sits on the list the details came from.
+function listEntryOnShow() {
   const id = current && current.id;
-  const entry = id != null && lists.watchlist[id];
+  const list = infoFrom && lists[infoFrom];
+  const entry = id != null && list && list[id];
   return entry ? { id, entry } : null;
 }
 
 $("btnWatchedIt").addEventListener("click", () => {
-  const on = watchlistEntryOnShow();
+  const on = listEntryOnShow();
   if (on) markSeenFromWatchlist(on.id, on.entry, navBack);
 });
 
 $("btnRemoveFromList").addEventListener("click", () => {
-  const on = watchlistEntryOnShow();
+  const on = listEntryOnShow();
   if (!on) return;
-  removeFromList("watchlist", String(on.id), on.entry);
+  removeFromList(infoFrom, String(on.id), on.entry);
   navBack();
 });
 
@@ -1327,6 +1332,8 @@ function resetSearch() {
   search.budget = "";
   search.revenue = "";
   search.englishOnly = false;
+  search.includeSeen = false;
+  search.includeWatchlist = false;
   search.maxRuntime = 0;
   // Age and year outlive the session, so clearing them has to stick even if
   // the user closes the search screen without applying.
@@ -1349,6 +1356,8 @@ function fillSearchForm() {
   $("inpComposer").value = search.composer;
   $("inpStudio").value = search.studios;
   $("chkEnglish").checked = search.englishOnly;
+  $("chkIncludeSeen").checked = search.includeSeen;
+  $("chkIncludeWatchlist").checked = search.includeWatchlist;
   buildRuntimeOptions();
   buildMoneyOptions("selBudget", BUDGET_RANGES, search.budget);
   buildMoneyOptions("selRevenue", REVENUE_RANGES, search.revenue);
@@ -1449,6 +1458,8 @@ $("btnApplySearch").addEventListener("click", async () => {
       search.budget = $("selBudget").value;
       search.revenue = $("selRevenue").value;
       search.englishOnly = $("chkEnglish").checked;
+      search.includeSeen = $("chkIncludeSeen").checked;
+      search.includeWatchlist = $("chkIncludeWatchlist").checked;
       search.maxRuntime = $("selRuntime").value ? parseInt($("selRuntime").value, 10) : 0;
       const actors = await resolveActors(search.actors);
       const directors = await resolveActors(search.director);
@@ -1475,6 +1486,8 @@ $("btnApplySearch").addEventListener("click", async () => {
       // no year — never a limit still in force that nothing on screen shows.
       search.maxCert = "";
       search.fromYear = null;
+      search.includeSeen = false;
+      search.includeWatchlist = false;
       search.actorIds = [];
       search.actorNames = [];
       search.directorIds = [];
@@ -1583,7 +1596,13 @@ function openInfo(replace) {
   if (m.imdb_id) {
     $("lnkIMDb").href = "https://www.imdb.com/title/" + m.imdb_id + "/parentalguide";
   }
-  $("watchlistActions").hidden = !(infoFrom === "watchlist" && lists.watchlist[m.id]);
+  // Actions for the list the details were opened from, while the movie is
+  // still on it.
+  const onWatchlist = infoFrom === "watchlist" && !!lists.watchlist[m.id];
+  const onSeen = infoFrom === "seen" && !!lists.seen[m.id];
+  $("btnWatchedIt").hidden = !onWatchlist;
+  $("btnRemoveFromList").hidden = !(onWatchlist || onSeen);
+  $("listActions").hidden = !(onWatchlist || onSeen);
 
   if (replace) navReplace("info");
   else navPush("info");
@@ -1634,6 +1653,8 @@ function forceSearchFor(kind, id, name) {
   search.budget = "";
   search.revenue = "";
   search.englishOnly = false;
+  search.includeSeen = false;
+  search.includeWatchlist = false;
   search.maxRuntime = 0;
   search.actors = ""; search.actorIds = []; search.actorNames = [];
   search.director = ""; search.directorIds = []; search.directorNames = [];
@@ -1941,7 +1962,10 @@ function closeRating() {
   const after = ratingAfter;
   ratingTarget = null;
   ratingAfter = null;
-  if (after) after();
+  // Off the popstate turn that closed the sheet. What follows is often another
+  // navigation — back to the list the movie came from — and browsers are not
+  // uniformly happy about being asked to navigate from inside a popstate.
+  if (after) setTimeout(after, 0);
 }
 
 function openRating(id, entry, after) {
@@ -2042,17 +2066,24 @@ function buildRow(id, entry) {
 
   inner.append(img, text);
 
-  // Watched it after all: the movie moves over to seen and is rated there and
-  // then. Its own tap must not also count as a tap on the row.
-  if (openListName === "watchlist") {
-    const seenBtn = document.createElement("button");
-    seenBtn.className = "row-action";
-    seenBtn.textContent = "Seen";
-    seenBtn.addEventListener("click", (e) => {
+  // A row's own action, which must not also count as a tap on the row.
+  const rowAction = (label, onTap) => {
+    const btn = document.createElement("button");
+    btn.className = "row-action";
+    btn.textContent = label;
+    btn.addEventListener("click", (e) => {
       e.stopPropagation();
-      markSeenFromWatchlist(id, entry);
+      onTap();
     });
-    inner.appendChild(seenBtn);
+    inner.appendChild(btn);
+  };
+  // Watched it after all: the movie moves over to seen and is rated there and
+  // then.
+  if (openListName === "watchlist") {
+    rowAction("Seen", () => markSeenFromWatchlist(id, entry));
+  }
+  if (openListName === "seen") {
+    rowAction("Remove", () => removeFromList("seen", id, entry));
   }
 
   li.appendChild(inner);
