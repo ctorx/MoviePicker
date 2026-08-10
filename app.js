@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.26.0";
+const APP_VERSION = "2.27.0";
 
 // ---------- State (localStorage) ----------
 
@@ -59,6 +59,8 @@ function saveLists() { store.save("mp_lists", lists); }
 const search = {
   query: "", // a title or word to look up; switches the pool off discover
   queryMode: "title", // "title", or "anything" for titles plus topic tags
+  relatedId: null, // rotating through one movie's recommendations
+  relatedTitle: "",
   advanced: false,
   genres: new Set(),
   genreMode: "all", // "all" = must have every selected genre, "any" = at least one
@@ -402,6 +404,19 @@ function verifyPick(m) {
 
 const broadSearch = () => !!search.query && search.queryMode === "anything";
 
+// Either of these replaces discover with a pool of its own.
+const fixedPool = () => !!search.query || !!search.relatedId;
+
+// Order means nothing in a pool that gets shuffled, but what's in it does.
+// Neither TMDB's search nor its recommendations carry a quality floor, so
+// this applies the one discover would have.
+function worthWatching(movies) {
+  const worth = movies.filter(
+    (m) => (m.vote_count || 0) >= MIN_VOTES && (m.vote_average || 0) >= MIN_SCORE
+  );
+  return worth.length ? worth : movies;
+}
+
 function titleWords(s) {
   return s.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, " ").trim().split(" ");
 }
@@ -442,6 +457,7 @@ function byMatchThenRelease(query) {
 // stepping through a series costs one request per movie, not five. In broad
 // mode the filters shape the tag half of the pool, so they belong in the key.
 function queryPoolKey() {
+  if (search.relatedId) return "related:" + search.relatedId;
   return broadSearch()
     ? "any:" + search.query.toLowerCase() + ":" + JSON.stringify(discoverParams(1))
     : "title:" + search.query.toLowerCase();
@@ -501,6 +517,22 @@ async function ensureQueryPool(token) {
   const key = queryPoolKey();
   if (queryPool.key === key) return true;
 
+  // TMDB's own recommendations: what people who liked this one went on to
+  // like. Three pages is plenty — the tail gets thin.
+  if (search.relatedId) {
+    const found = [];
+    for (let p = 1; p <= 3; p++) {
+      const data = await tmdbFetch("/movie/" + search.relatedId + "/recommendations",
+        { page: String(p) });
+      if (token !== pickToken) return false;
+      found.push(...data.results.filter((m) => m.id !== search.relatedId));
+      if (p >= data.total_pages) break;
+    }
+    const pool = worthWatching(found);
+    queryPool = { key, movies: pool, total: pool.length };
+    return true;
+  }
+
   const searchPage = (page) =>
     tmdbFetch("/search/movie", {
       query: search.query,
@@ -549,10 +581,7 @@ async function ensureQueryPool(token) {
     // would otherwise mix Interstellar with forty straight-to-video films
     // that happen to have the word in the title. Order doesn't matter here —
     // picks are shuffled — but which movies are in the pool does.
-    const worth = movies.filter(
-      (m) => (m.vote_count || 0) >= MIN_VOTES && (m.vote_average || 0) >= MIN_SCORE
-    );
-    if (worth.length) pool = worth;
+    pool = worthWatching(movies);
   } else {
     pool.sort(byMatchThenRelease(search.query));
   }
@@ -579,9 +608,9 @@ async function pickFromQuery(token) {
   const excluded = excludedIds();
   const usable = queryPool.movies.filter((m) => m.poster_path && !excluded.has(m.id));
   if (!usable.length) {
-    showPickError(
-      'No movies found for "' + search.query + '". Check the spelling, or try fewer words.'
-    );
+    showPickError(search.relatedId
+      ? 'Nothing left that TMDB relates to "' + search.relatedTitle + '".'
+      : 'No movies found for "' + search.query + '". Check the spelling, or try fewer words.');
     return;
   }
   let fresh = usable.filter((m) => !sessionShown.has(m.id));
@@ -593,7 +622,7 @@ async function pickFromQuery(token) {
   // A title walks its series in release order. A subject has no order to walk,
   // so it's shuffled — the same word shouldn't hand back the same movie first
   // every time it's searched.
-  if (broadSearch()) shuffle(fresh);
+  if (broadSearch() || search.relatedId) shuffle(fresh);
 
   for (const movie of fresh) {
     const details = await fetchMovie(movie.id);
@@ -608,6 +637,7 @@ async function pickFromQuery(token) {
 
 function searchSummary() {
   const bits = [];
+  if (search.relatedId) bits.push('like "' + search.relatedTitle + '"');
   if (search.query) {
     bits.push((broadSearch() ? 'about "' : 'matching "') + search.query + '"');
   }
@@ -671,7 +701,7 @@ async function pickMovie() {
     showPickState("loading");
   }
   try {
-    if (search.query) return await pickFromQuery(token);
+    if (fixedPool()) return await pickFromQuery(token);
 
     const excluded = excludedIds();
     const first = await tmdbFetch("/discover/movie", discoverParams(1));
@@ -1170,6 +1200,7 @@ async function renderGenreChips() {
 function resetSearch() {
   search.query = "";
   search.queryMode = "title";
+  search.relatedId = null;
   search.advanced = false;
   search.genres.clear();
   search.genreMode = "all";
@@ -1296,6 +1327,7 @@ $("btnApplySearch").addEventListener("click", async () => {
   saveSettings();
 
   search.query = $("inpQuery").value.trim();
+  search.relatedId = null; // a new search leaves any related rotation
   search.advanced = $("chkAdvanced").checked;
   const btn = $("btnApplySearch");
   btn.disabled = true;
@@ -1440,12 +1472,30 @@ function openInfo(replace) {
   else navPush("info");
 }
 
+// The details screen's way into a rotation of TMDB's recommendations for the
+// movie on show. The advanced filters are switched off rather than cleared —
+// they'd narrow an already narrow pool to nothing — but the age rating and
+// year stay, since those were set deliberately and one of them is why the
+// picks are safe for whoever is watching.
+function startRelated(m) {
+  search.query = "";
+  search.advanced = false;
+  search.relatedId = m.id;
+  search.relatedTitle = m.title;
+  sessionShown.clear();
+  announceCount = true;
+  navHome();
+  show("screen-pick");
+  pickMovie();
+}
+
 // A name tap in the info screen becomes a fresh advanced search for just that
 // person or studio: all time (blank year), blank age (21), no other filters.
 function forceSearchFor(kind, id, name) {
   search.advanced = true;
   search.query = "";
   search.queryMode = "title";
+  search.relatedId = null;
   search.genres.clear();
   search.genreMode = "all";
   search.medium = "";
@@ -1541,6 +1591,10 @@ function closeTrailerUI() {
   } catch {}
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
 }
+
+$("btnRelated").addEventListener("click", () => {
+  if (current) startRelated(current);
+});
 
 $("btnTrailer").addEventListener("click", () => {
   trailerFromInfo = true;

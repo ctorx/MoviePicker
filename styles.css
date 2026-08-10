@@ -478,6 +478,9 @@ button:active { transform: scale(0.98); }
 }
 .ext-btn svg { width: 16px; height: 16px; }
 
+/* Stays in the app rather than leaving it, so it reads as an action. */
+.related-btn { border-color: var(--accent); color: var(--accent); }
+
 #infoOverview { margin-top: 16px; }
 
 /* Info reads a notch larger than the rest of the app. */
