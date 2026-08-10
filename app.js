@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.30.0";
+const APP_VERSION = "2.30.1";
 
 // ---------- State (localStorage) ----------
 
@@ -1111,8 +1111,9 @@ function applyHash() {
   // behind it — the seen list keeps its place while a rating is given.
   const h = raw === "rate" ? ratingUnder : raw;
   const rating = raw === "rate" && !!ratingTarget;
+  const ratingClosed = !rating && !!ratingTarget;
   setShown("modalRate", rating);
-  if (!rating && ratingTarget) closeRating();
+  if (ratingClosed) closeRating();
   document.body.classList.toggle("drawer-open", h === "menu");
 
   // Where the open list is sitting, banked before anything moves it, so
@@ -1149,8 +1150,12 @@ function applyHash() {
   document.body.classList.toggle("no-scroll", MODALS.some((id) => !$(id).hidden));
 
   // Stepping back through the picks: the entry says which movie it showed.
+  // Not when a rating sheet has just closed, though. Marking a movie seen
+  // clears the card and holds the next pick until the sheet goes; the entry
+  // still names the movie just rated, and restoring it here would both put it
+  // back on screen and cancel the pick that was waiting on the sheet.
   const wantId = history.state && history.state.movieId;
-  if (wantId && (!current || current.id !== wantId)) restoreMovie(wantId);
+  if (!ratingClosed && wantId && (!current || current.id !== wantId)) restoreMovie(wantId);
 }
 
 window.addEventListener("popstate", applyHash);

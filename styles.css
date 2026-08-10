@@ -333,16 +333,14 @@ button:active { transform: scale(0.98); }
 .modal-body { max-width: 480px; margin: 0 auto; }
 .modal-head { max-width: 480px; margin: 0 auto; }
 
-/* Extra room after the last info block so it can scroll clear of the
-   floating Back button. */
-.info-body { padding-bottom: 120px; }
+/* The Back bar sits in the flow, so the last block scrolls clear of it on
+   its own — this is breathing room, not clearance. */
+.info-body { padding-bottom: 24px; }
 
-/* Sticky (not fixed) so it lives in the modal's scroll flow — a fixed
-   button can survive as a stale paint layer after the modal is hidden. */
+/* Sticky, not fixed: the bar lives in the modal's scroll flow, which keeps
+   the end of the content reachable and avoids a fixed layer surviving as a
+   stale paint after the modal is hidden. */
 .back-btn {
-  position: sticky;
-  bottom: 18px;
-  z-index: 2;
   display: flex;
   align-items: center;
   gap: 9px;
@@ -363,7 +361,7 @@ button:active { transform: scale(0.98); }
    to the end of the form still reaches the last field instead of leaving it
    stranded underneath. The modal's own bottom padding goes, or the bar would
    float above a gap once it settles. */
-#modalSearch { padding-bottom: 0; }
+#modalSearch, #modalInfo { padding-bottom: 0; }
 
 .sticky-actions {
   position: sticky;
@@ -489,8 +487,16 @@ button:active { transform: scale(0.98); }
 }
 .ext-btn svg { width: 16px; height: 16px; }
 
-.watchlist-actions { margin-top: 30px; }
-.danger-link { color: var(--danger); }
+.watchlist-actions { display: flex; gap: 10px; margin-top: 30px; }
+.half-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 11px 10px;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+.watched-btn { background: var(--accent); color: #08301e; }
+.remove-btn { background: var(--card); border: 1px solid var(--danger); color: var(--danger); }
 
 /* Trailer and Similar share a line; the wrap catches narrow screens. */
 .info-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
