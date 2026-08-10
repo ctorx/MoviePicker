@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.25.2";
+const APP_VERSION = "2.26.0";
 
 // ---------- State (localStorage) ----------
 
@@ -768,16 +768,19 @@ async function pickMovie() {
   }
 }
 
+// Opening a movie from a list goes to its details. The entry pushed here is
+// the loading spinner standing in for them; once they arrive it becomes the
+// details screen rather than pushing a second entry, so one press back from
+// there is the list it was opened from.
 async function openMovieById(id) {
   const token = ++pickToken; // cancel any in-flight pick
   showPickState("loading");
-  // The movie gets its own entry on top of the list it was opened from, so
-  // going back lands on that list rather than dropping out to the card.
   navPush("movie");
   try {
     const details = await fetchMovie(id);
     if (token !== pickToken) return;
     renderMovie(details);
+    openInfo(true);
   } catch (err) {
     if (token !== pickToken) return;
     showPickError(err.message || "Couldn't load that movie.");
@@ -949,6 +952,14 @@ function navPush(frag) {
   }
   const depth = (history.state && history.state.depth) || 0;
   history.pushState({ depth: depth + 1 }, "", "#" + frag);
+  applyHash();
+}
+
+// Swaps what the current entry points at instead of adding one, so a screen
+// that stands in for another while it loads doesn't cost a second back press.
+function navReplace(frag) {
+  const depth = (history.state && history.state.depth) || 0;
+  history.replaceState({ depth }, "", "#" + frag);
   applyHash();
 }
 
@@ -1343,7 +1354,7 @@ $("btnApplySearch").addEventListener("click", async () => {
 
 // ---------- More info ----------
 
-function openInfo() {
+function openInfo(replace) {
   if (!current) return;
   const m = current;
   $("infoTitle").textContent = m.title;
@@ -1425,7 +1436,8 @@ function openInfo() {
   if (m.imdb_id) {
     $("lnkIMDb").href = "https://www.imdb.com/title/" + m.imdb_id + "/parentalguide";
   }
-  navPush("info");
+  if (replace) navReplace("info");
+  else navPush("info");
 }
 
 // A name tap in the info screen becomes a fresh advanced search for just that
