@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.29.0";
+const APP_VERSION = "2.30.0";
 
 // ---------- State (localStorage) ----------
 
@@ -847,6 +847,7 @@ async function openMovieById(id) {
     const details = await fetchMovie(id);
     if (token !== pickToken) return;
     renderMovie(details);
+    infoFrom = openListName || "";
     openInfo(true);
   } catch (err) {
     if (token !== pickToken) return;
@@ -859,6 +860,7 @@ async function openMovieById(id) {
 const $ = (id) => document.getElementById(id);
 
 let current = null; // the movie on screen
+let infoFrom = ""; // the list the details were opened from, if any
 
 function show(screen) {
   for (const s of ["screen-setup", "screen-pick"]) $(s).hidden = s !== screen;
@@ -1158,6 +1160,27 @@ document.querySelectorAll(".modal-close").forEach((btn) => {
 });
 
 $("btnInfoBack").addEventListener("click", navBack);
+
+// Watched it and Remove, on the details of something on the watchlist. Both
+// finish by going back to the list — the movie has just left it, so there's
+// nothing on the details screen still worth reading.
+function watchlistEntryOnShow() {
+  const id = current && current.id;
+  const entry = id != null && lists.watchlist[id];
+  return entry ? { id, entry } : null;
+}
+
+$("btnWatchedIt").addEventListener("click", () => {
+  const on = watchlistEntryOnShow();
+  if (on) markSeenFromWatchlist(on.id, on.entry, navBack);
+});
+
+$("btnRemoveFromList").addEventListener("click", () => {
+  const on = watchlistEntryOnShow();
+  if (!on) return;
+  removeFromList("watchlist", String(on.id), on.entry);
+  navBack();
+});
 
 $("btnMenu").addEventListener("click", () => {
   refreshCounts();
@@ -1555,6 +1578,8 @@ function openInfo(replace) {
   if (m.imdb_id) {
     $("lnkIMDb").href = "https://www.imdb.com/title/" + m.imdb_id + "/parentalguide";
   }
+  $("watchlistActions").hidden = !(infoFrom === "watchlist" && lists.watchlist[m.id]);
+
   if (replace) navReplace("info");
   else navPush("info");
 }
@@ -1797,6 +1822,7 @@ function handleTap() {
   } else {
     tapTimer = setTimeout(() => {
       tapTimer = null;
+      infoFrom = ""; // straight from the card, not from a list
       openInfo();
     }, 300);
   }
@@ -1967,13 +1993,13 @@ function renderList() {
 
 // Moves the entry across, keeping its title, year and poster, then asks for a
 // rating the same way swiping down does.
-function markSeenFromWatchlist(id, entry) {
+function markSeenFromWatchlist(id, entry, after) {
   lists.seen[id] = { ...entry };
   delete lists.watchlist[id];
   saveLists();
   refreshCounts();
   renderList();
-  openRating(id, lists.seen[id]);
+  openRating(id, lists.seen[id], after);
 }
 
 function buildRow(id, entry) {
