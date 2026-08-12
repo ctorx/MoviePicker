@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.36.0";
+const APP_VERSION = "2.37.0";
 
 // ---------- State (localStorage) ----------
 
@@ -77,7 +77,6 @@ const search = {
   browse: "", // "popular" or "recent" — a ready-made list instead of a search
   maxCert: "", // highest US rating allowed; "" is no limit
   fromYear: null,
-  advanced: false,
   genres: new Set(),
   genreMode: "all", // "all" = must have every selected genre, "any" = at least one
   actors: "",
@@ -113,7 +112,7 @@ const search = {
 // never overwrite the search being kept.
 const SAVED_SEARCH = {
   query: "text", queryMode: "text",
-  maxCert: "text", fromYear: "year", advanced: "flag",
+  maxCert: "text", fromYear: "year",
   genreMode: "text", medium: "text", obscurity: "text",
   actors: "text", actorIds: "list", actorNames: "list",
   director: "text", directorIds: "list", directorNames: "list",
@@ -327,14 +326,13 @@ function inMoneyRange(value, range) {
 }
 
 function moneyOk(m) {
-  if (!search.advanced) return true;
   return inMoneyRange(m.budget, budgetRange()) && inMoneyRange(m.revenue, revenueRange());
 }
 
 // A range that only big films can satisfy is worth reordering the pool for.
 function moneySorted() {
   const big = (r) => r && r.min >= 1e8;
-  return search.advanced && (big(budgetRange()) || big(revenueRange()));
+  return big(budgetRange()) || big(revenueRange());
 }
 
 // Pages a random pick may sample. A revenue-sorted pool keeps its matches at
@@ -344,12 +342,12 @@ const MONEY_SORT_PAGES = 25;
 // TMDB publishes nothing about dubbing — no audio tracks, no dub availability —
 // so "not foreign" can only mean the movie's own language.
 function englishOk(m) {
-  if (!search.advanced || !search.englishOnly) return true;
+  if (!search.englishOnly) return true;
   return m.original_language === "en";
 }
 
 function studioOk(m) {
-  if (!search.advanced || !search.studioIds.length) return true;
+  if (!search.studioIds.length) return true;
   // Co-productions list several studios; one match is enough.
   return (m.production_companies || []).some((c) => search.studioIds.includes(c.id));
 }
@@ -374,10 +372,8 @@ const OBSCURITY = [
   { key: "any", label: "Anything at all", votes: 0, score: 0, depth: 40 },
 ];
 
-// An advanced filter like any other: switching the box off puts the default
-// floor back, and so do the ready-made lists, which aren't a search to narrow.
 const obscurityLevel = () =>
-  (search.advanced && OBSCURITY.find((o) => o.key === search.obscurity)) || OBSCURITY[0];
+  OBSCURITY.find((o) => o.key === search.obscurity) || OBSCURITY[0];
 
 // Streaming services, with TMDB's ids for them (checked for the US region on
 // 2026-08-12). TMDB lists 291 providers, most of them single-subject channels
@@ -434,7 +430,7 @@ function watchOptions(m) {
 // Discover filters by service server-side. A title search, a related list and
 // a browse list don't, so the loaded movie gets checked against the same set.
 function providerOk(m) {
-  if (!search.advanced || !search.providers.size) return true;
+  if (!search.providers.size) return true;
   const want = new Set(providerIds());
   return watchOptions(m).some((p) => want.has(p.provider_id));
 }
@@ -455,47 +451,44 @@ function discoverParams(page) {
     p["certification.lte"] = search.maxCert;
   }
   if (search.fromYear) p["primary_release_date.gte"] = search.fromYear + "-01-01";
-  if (search.advanced) {
-    if (search.genres.size) {
-      // TMDB reads a comma as AND and a pipe as OR. Every other filter
-      // (cast, crew, runtime, year, certification) is a separate parameter,
-      // so it still ANDs with whichever genre mode is in play.
-      p.with_genres = [...search.genres].join(search.genreMode === "any" ? "|" : ",");
-    }
-    if (search.actorIds.length) p.with_cast = search.actorIds.join(",");
-    const crewIds = [...search.directorIds, ...search.composerIds];
-    if (crewIds.length) p.with_crew = crewIds.join(",");
-    if (search.actorIds.length || crewIds.length) {
-      // Personal filmographies are small; the popularity floors would empty
-      // them out. Only ever loosens — a level set below this keeps its own.
-      if (floor.votes > 10) p["vote_count.gte"] = "10";
-      delete p["vote_average.gte"];
-    }
-    // A film matches if the studio is any one of its production companies,
-    // and if several were typed, any one of those counts.
-    if (search.studioIds.length) p.with_companies = search.studioIds.join("|");
-    // Any one of the chosen services will do, and rentals don't count.
-    const provs = providerIds();
-    if (provs.length) {
-      p.with_watch_providers = provs.join("|");
-      p.watch_region = WATCH_REGION;
-      p.with_watch_monetization_types = WATCH_TYPES;
-    }
-    if (search.englishOnly) p.with_original_language = "en";
-    if (search.maxRuntime) p["with_runtime.lte"] = String(search.maxRuntime);
-    mediumParams(p);
-
-    // Money is filtered on the loaded movie, so a demanding range would
-    // otherwise mean rejecting picks one at a time through a pool sorted by
-    // popularity. Ordering by takings puts the matches at the front instead.
-    if (moneySorted()) p.sort_by = "revenue.desc";
+  if (search.genres.size) {
+    // TMDB reads a comma as AND and a pipe as OR. Every other filter
+    // (cast, crew, runtime, year, certification) is a separate parameter,
+    // so it still ANDs with whichever genre mode is in play.
+    p.with_genres = [...search.genres].join(search.genreMode === "any" ? "|" : ",");
   }
+  if (search.actorIds.length) p.with_cast = search.actorIds.join(",");
+  const crewIds = [...search.directorIds, ...search.composerIds];
+  if (crewIds.length) p.with_crew = crewIds.join(",");
+  if (search.actorIds.length || crewIds.length) {
+    // Personal filmographies are small; the popularity floors would empty
+    // them out. Only ever loosens — a level set below this keeps its own.
+    if (floor.votes > 10) p["vote_count.gte"] = "10";
+    delete p["vote_average.gte"];
+  }
+  // A film matches if the studio is any one of its production companies,
+  // and if several were typed, any one of those counts.
+  if (search.studioIds.length) p.with_companies = search.studioIds.join("|");
+  // Any one of the chosen services will do, and rentals don't count.
+  const provs = providerIds();
+  if (provs.length) {
+    p.with_watch_providers = provs.join("|");
+    p.watch_region = WATCH_REGION;
+    p.with_watch_monetization_types = WATCH_TYPES;
+  }
+  if (search.englishOnly) p.with_original_language = "en";
+  if (search.maxRuntime) p["with_runtime.lte"] = String(search.maxRuntime);
+  mediumParams(p);
+
+  // Money is filtered on the loaded movie, so a demanding range would
+  // otherwise mean rejecting picks one at a time through a pool sorted by
+  // popularity. Ordering by takings puts the matches at the front instead.
+  if (moneySorted()) p.sort_by = "revenue.desc";
   return p;
 }
 
 // with_crew matches any crew role, so confirm the actual job on each pick.
 function crewOk(m) {
-  if (!search.advanced) return true;
   const crew = m.credits?.crew || [];
   if (search.directorIds.length &&
       !crew.some((c) => c.job === "Director" && search.directorIds.includes(c.id))) {
@@ -520,7 +513,10 @@ function matchesSearch(m) {
   if (!certAllowed(m)) return false;
   const year = parseInt((m.release_date || "").slice(0, 4), 10);
   if (search.fromYear && !(year >= search.fromYear)) return false;
-  if (!search.advanced) return true;
+  // Similar is TMDB's recommendations for one movie — a few dozen films, not a
+  // pool to sift. The rating cap and the oldest year still hold, because those
+  // are about what you'll watch at all; the rest would empty the list.
+  if (search.relatedId) return true;
   if (search.genres.size) {
     const ids = (m.genres || []).map((g) => g.id);
     const want = [...search.genres];
@@ -895,25 +891,23 @@ function searchSummary() {
   }
   if (search.maxCert) bits.push("rated " + search.maxCert + " or under");
   if (search.fromYear) bits.push(search.fromYear + " and newer");
-  if (search.advanced) {
-    if (search.genres.size && genreCache) {
-      const names = genreCache.filter((g) => search.genres.has(g.id)).map((g) => g.name);
-      bits.push(names.join(search.genreMode === "any" ? " or " : " + "));
-    }
-    if (search.medium) bits.push(mediumByKey(search.medium).label.toLowerCase());
-    if (search.obscurity !== "known") bits.push(obscurityLevel().label.toLowerCase());
-    if (search.providers.size) bits.push("on " + providerLabels().join(" or "));
-    if (search.actorNames.length) bits.push("with " + search.actorNames.join(" & "));
-    if (search.directorNames.length) bits.push("directed by " + search.directorNames.join(" & "));
-    if (search.composerNames.length) bits.push("music by " + search.composerNames.join(" & "));
-    if (search.studioNames.length) bits.push("from " + search.studioNames.join(" or "));
-    if (budgetRange()) bits.push("budget " + budgetRange().label.toLowerCase());
-    if (revenueRange()) bits.push("box office " + revenueRange().label.toLowerCase());
-    if (search.englishOnly) bits.push("English-language");
-    if (search.includeSeen) bits.push("including ones you've seen");
-    if (search.includeWatchlist) bits.push("including your watchlist");
-    if (search.maxRuntime) bits.push("under " + runtimeText(search.maxRuntime));
+  if (search.genres.size && genreCache) {
+    const names = genreCache.filter((g) => search.genres.has(g.id)).map((g) => g.name);
+    bits.push(names.join(search.genreMode === "any" ? " or " : " + "));
   }
+  if (search.medium) bits.push(mediumByKey(search.medium).label.toLowerCase());
+  if (search.obscurity !== "known") bits.push(obscurityLevel().label.toLowerCase());
+  if (search.providers.size) bits.push("on " + providerLabels().join(" or "));
+  if (search.actorNames.length) bits.push("with " + search.actorNames.join(" & "));
+  if (search.directorNames.length) bits.push("directed by " + search.directorNames.join(" & "));
+  if (search.composerNames.length) bits.push("music by " + search.composerNames.join(" & "));
+  if (search.studioNames.length) bits.push("from " + search.studioNames.join(" or "));
+  if (budgetRange()) bits.push("budget " + budgetRange().label.toLowerCase());
+  if (revenueRange()) bits.push("box office " + revenueRange().label.toLowerCase());
+  if (search.englishOnly) bits.push("English-language");
+  if (search.includeSeen) bits.push("including ones you've seen");
+  if (search.includeWatchlist) bits.push("including your watchlist");
+  if (search.maxRuntime) bits.push("under " + runtimeText(search.maxRuntime));
   return bits.join(" · ");
 }
 
@@ -1445,10 +1439,8 @@ function renderQueryMode() {
     btn.classList.toggle("active", btn.dataset.qmode === search.queryMode);
   }
   $("queryModeHint").textContent = broadSearchMode()
-    ? "Anything: titles plus TMDB's topic tags, with anything whose description "
-      + "mentions the word ranked above the rest."
-    : "Title: closest matches first, then oldest to newest — \"Harry Potter\" "
-      + "walks the series in order. Finds movies already on your lists.";
+    ? "Searches topic tags as well as titles."
+    : "Closest match first, then oldest to newest.";
 }
 
 $("queryMode").addEventListener("click", (e) => {
@@ -1468,7 +1460,7 @@ function renderGenreMode() {
   $("genreModeHint").textContent =
     search.genreMode === "any"
       ? "Any: a movie needs at least one of the selected genres."
-      : "All: a movie must have every selected genre. Picking several narrows it fast.";
+      : "All: a movie must have every selected genre.";
 }
 
 $("genreMode").addEventListener("click", (e) => {
@@ -1570,14 +1562,12 @@ async function renderGenreChips() {
   }
 }
 
-// Back to a first-run search: everything the two screens can set, basic and
-// advanced alike. It doesn't run the search — the form is left cleared for
-// the user to add to and apply.
+// Back to a first-run search: every filter on the card. It doesn't run the
+// search — the form is left cleared for the user to add to and apply.
 function resetSearch() {
   search.query = "";
   search.queryMode = "title";
   search.relatedId = null;
-  search.advanced = false;
   search.genres.clear();
   search.genreMode = "all";
   search.medium = "";
@@ -1609,8 +1599,6 @@ function fillSearchForm() {
   renderQueryMode();
   $("selMaxCert").value = search.maxCert;
   $("inpYear").value = search.fromYear || "";
-  $("chkAdvanced").checked = search.advanced;
-  $("advancedBox").hidden = !search.advanced;
   $("inpActors").value = search.actors;
   $("inpDirector").value = search.director;
   $("inpComposer").value = search.composer;
@@ -1623,11 +1611,9 @@ function fillSearchForm() {
   buildMoneyOptions("selBudget", BUDGET_RANGES, search.budget);
   buildMoneyOptions("selRevenue", REVENUE_RANGES, search.revenue);
   renderGenreMode();
-  if (search.advanced) {
-    renderGenreChips();
-    renderMediumChips();
-    renderProviderChips();
-  }
+  renderGenreChips();
+  renderMediumChips();
+  renderProviderChips();
   $("searchError").hidden = true;
 }
 
@@ -1641,15 +1627,6 @@ $("btnRecent").addEventListener("click", () => startBrowse("recent"));
 $("btnResetSearch").addEventListener("click", resetSearch);
 $("btnSearch").addEventListener("click", openSearch);
 $("btnErrorSearch").addEventListener("click", openSearch);
-
-$("chkAdvanced").addEventListener("change", () => {
-  $("advancedBox").hidden = !$("chkAdvanced").checked;
-  if ($("chkAdvanced").checked) {
-    renderGenreChips();
-    renderMediumChips();
-    renderProviderChips();
-  }
-});
 
 async function resolveCompanies(namesText) {
   const names = namesText.split(",").map((s) => s.trim()).filter(Boolean);
@@ -1707,62 +1684,42 @@ $("btnApplySearch").addEventListener("click", async () => {
   // A search of one's own leaves any ready-made rotation behind.
   search.relatedId = null;
   search.browse = "";
-  search.advanced = $("chkAdvanced").checked;
   const btn = $("btnApplySearch");
   btn.disabled = true;
   try {
-    if (search.advanced) {
-      search.maxCert = $("selMaxCert").value;
-      search.fromYear = year;
-      search.actors = $("inpActors").value;
-      search.director = $("inpDirector").value;
-      search.composer = $("inpComposer").value;
-      search.studios = $("inpStudio").value;
-      search.obscurity = $("selObscurity").value;
-      search.budget = $("selBudget").value;
-      search.revenue = $("selRevenue").value;
-      search.englishOnly = $("chkEnglish").checked;
-      search.includeSeen = $("chkIncludeSeen").checked;
-      search.includeWatchlist = $("chkIncludeWatchlist").checked;
-      search.maxRuntime = $("selRuntime").value ? parseInt($("selRuntime").value, 10) : 0;
-      const actors = await resolveActors(search.actors);
-      const directors = await resolveActors(search.director);
-      const composers = await resolveActors(search.composer);
-      const studios = await resolveCompanies(search.studios);
-      const missing = [
-        ...actors.missing, ...directors.missing, ...composers.missing, ...studios.missing,
-      ];
-      if (missing.length) {
-        errEl.textContent = "Couldn't find: " + missing.join(", ");
-        errEl.hidden = false;
-        return;
-      }
-      search.actorIds = actors.ids;
-      search.actorNames = actors.resolved;
-      search.directorIds = directors.ids;
-      search.directorNames = directors.resolved;
-      search.composerIds = composers.ids;
-      search.composerNames = composers.resolved;
-      search.studioIds = studios.ids;
-      search.studioNames = studios.resolved;
-    } else {
-      // The box is where these live now, so an unticked box means no cap and
-      // no year — never a limit still in force that nothing on screen shows.
-      search.maxCert = "";
-      search.fromYear = null;
-      search.includeSeen = false;
-      search.includeWatchlist = false;
-      search.obscurity = "known";
-      search.providers.clear();
-      search.actorIds = [];
-      search.actorNames = [];
-      search.directorIds = [];
-      search.directorNames = [];
-      search.composerIds = [];
-      search.composerNames = [];
-      search.studioIds = [];
-      search.studioNames = [];
+    search.maxCert = $("selMaxCert").value;
+    search.fromYear = year;
+    search.actors = $("inpActors").value;
+    search.director = $("inpDirector").value;
+    search.composer = $("inpComposer").value;
+    search.studios = $("inpStudio").value;
+    search.obscurity = $("selObscurity").value;
+    search.budget = $("selBudget").value;
+    search.revenue = $("selRevenue").value;
+    search.englishOnly = $("chkEnglish").checked;
+    search.includeSeen = $("chkIncludeSeen").checked;
+    search.includeWatchlist = $("chkIncludeWatchlist").checked;
+    search.maxRuntime = $("selRuntime").value ? parseInt($("selRuntime").value, 10) : 0;
+    const actors = await resolveActors(search.actors);
+    const directors = await resolveActors(search.director);
+    const composers = await resolveActors(search.composer);
+    const studios = await resolveCompanies(search.studios);
+    const missing = [
+      ...actors.missing, ...directors.missing, ...composers.missing, ...studios.missing,
+    ];
+    if (missing.length) {
+      errEl.textContent = "Couldn't find: " + missing.join(", ");
+      errEl.hidden = false;
+      return;
     }
+    search.actorIds = actors.ids;
+    search.actorNames = actors.resolved;
+    search.directorIds = directors.ids;
+    search.directorNames = directors.resolved;
+    search.composerIds = composers.ids;
+    search.composerNames = composers.resolved;
+    search.studioIds = studios.ids;
+    search.studioNames = studios.resolved;
     saveSearch();
     sessionShown.clear();
     announceCount = true;
@@ -1891,9 +1848,9 @@ function startBrowse(kind) {
   search.query = "";
   search.relatedId = null;
   search.browse = kind;
-  // The advanced box is left exactly as the user had it. Nothing on the
-  // search card reaches a quick search anyway, so switching it off would only
-  // mean coming back to a form that had quietly undone itself.
+  // The filters are left exactly as the user set them. Nothing on the search
+  // card reaches a quick search anyway, so clearing them would only mean
+  // coming back to a form that had quietly undone itself.
   sessionShown.clear();
   announceCount = true;
   navPush("movie"); // the search screen stays behind it
@@ -1904,7 +1861,6 @@ function startBrowse(kind) {
 function startRelated(m) {
   search.browse = "";
   search.query = "";
-  search.advanced = false;
   search.relatedId = m.id;
   search.relatedTitle = m.title;
   sessionShown.clear();
@@ -1917,7 +1873,6 @@ function startRelated(m) {
 // A name tap in the info screen becomes a fresh advanced search for just that
 // person or studio: all time (blank year), blank age (21), no other filters.
 function forceSearchFor(kind, id, name) {
-  search.advanced = true;
   search.query = "";
   search.queryMode = "title";
   search.relatedId = null;

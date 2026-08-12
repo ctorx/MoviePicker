@@ -94,18 +94,14 @@
         <h2>Quick search</h2>
         <div class="browse-row">
           <button id="btnPopular" class="browse-btn" type="button">Popular movies</button>
-          <button id="btnRecent" class="browse-btn" type="button">Browse recent movies</button>
+          <button id="btnRecent" class="browse-btn" type="button">Browse Recent</button>
         </div>
-        <p class="hint">Straight to a rotation of what's popular on TMDB, or what's come out in
-          the last six months. These are TMDB's own lists, so nothing in the card below applies
-          to them — no rating limit, no year, no filters. Your seen, watchlist and blocked
-          movies still stay out.</p>
+        <p class="hint">TMDB's own lists, so nothing below applies to them.</p>
       </section>
 
       <section class="search-card">
-        <h2>Search</h2>
-        <div class="label-row">
-          <label for="inpQuery">Looking for something <strong>specific</strong>?</label>
+        <div class="label-row card-head">
+          <h2>Search</h2>
           <div id="queryMode" class="seg" role="group" aria-label="What to search">
             <button type="button" class="seg-btn" data-qmode="title">Title</button>
             <button type="button" class="seg-btn" data-qmode="anything">Anything</button>
@@ -113,105 +109,84 @@
         </div>
         <input id="inpQuery" type="text" autocomplete="off" placeholder="blank = surprise me">
         <p class="hint" id="queryModeHint"></p>
-        <p class="hint">TMDB can only search titles, so "Anything" reaches the rest through its
-          topic tags. Everything below still applies either way.</p>
+
+        <label for="selMaxCert">Maximum rating allowed</label>
+        <select id="selMaxCert">
+          <option value="">Any rating</option>
+          <option value="G">G</option>
+          <option value="PG">PG</option>
+          <option value="PG-13">PG-13</option>
+          <option value="R">R</option>
+          <option value="NC-17">NC-17</option>
+        </select>
+        <p class="hint">US ratings, and movies TMDB has no US rating for are left out too.</p>
+
+        <label for="inpYear">Oldest year to draw from</label>
+        <input id="inpYear" type="number" min="1930" inputmode="numeric" placeholder="blank = all time">
+        <p class="hint">This year and newer, or blank for no limit.</p>
+
+        <label for="selObscurity">How well known</label>
+        <select id="selObscurity"></select>
+        <p class="hint">Loosening this finds far more to watch, and more of it will be rough.</p>
+
+        <label>Streaming on</label>
+        <div id="providerChips" class="chips"></div>
+        <p class="hint">Only what these services include or stream free with ads, never rentals.</p>
+
+        <div class="label-row">
+          <label>Genres</label>
+          <div id="genreMode" class="seg" role="group" aria-label="Genre matching">
+            <button type="button" class="seg-btn" data-mode="all">All</button>
+            <button type="button" class="seg-btn" data-mode="any">Any</button>
+          </div>
+        </div>
+        <div id="genreChips" class="chips"><p class="hint">Loading genres…</p></div>
+        <p class="hint" id="genreModeHint"></p>
+
+        <label>Format</label>
+        <div id="mediumChips" class="chips"></div>
+        <p class="hint">How it was made, as far as TMDB's hand-added tags know.</p>
+
+        <label for="inpActors">Actors / actresses</label>
+        <input id="inpActors" type="text" autocomplete="off" placeholder="e.g. Tom Hanks, Meg Ryan">
+        <p class="hint">Comma-separated, and a movie has to feature all of them.</p>
+
+        <label for="inpDirector">Director</label>
+        <input id="inpDirector" type="text" autocomplete="off" placeholder="e.g. Steven Spielberg">
+
+        <label for="inpComposer">Composer</label>
+        <input id="inpComposer" type="text" autocomplete="off" placeholder="e.g. John Williams">
+
+        <label for="inpStudio">Studio</label>
+        <input id="inpStudio" type="text" autocomplete="off" placeholder="e.g. Pixar, A24">
+        <p class="hint">Comma-separated, and any one of them among a movie's studios counts.</p>
+
+        <label for="selBudget">Budget</label>
+        <select id="selBudget"></select>
+
+        <label for="selRevenue">Box office</label>
+        <select id="selRevenue"></select>
+        <p class="hint">Setting either range leaves out movies with no figure on record.</p>
 
         <label class="toggle-row">
-          <input type="checkbox" id="chkAdvanced">
-          <span>Advanced search</span>
+          <input type="checkbox" id="chkEnglish">
+          <span>English-language only</span>
+        </label>
+        <p class="hint">Goes by the movie's own language, as TMDB knows nothing about dubs.</p>
+
+        <label class="toggle-row">
+          <input type="checkbox" id="chkIncludeSeen">
+          <span>Include movies you've seen</span>
         </label>
 
-        <div id="advancedBox" hidden>
-          <label for="selMaxCert">Maximum rating allowed</label>
-          <select id="selMaxCert">
-            <option value="">Any rating</option>
-            <option value="G">G</option>
-            <option value="PG">PG</option>
-            <option value="PG-13">PG-13</option>
-            <option value="R">R</option>
-            <option value="NC-17">NC-17</option>
-          </select>
-          <p class="hint">US ratings. Setting one also leaves out movies TMDB has no US rating
-            for, since there's no telling whether those clear it.</p>
+        <label class="toggle-row">
+          <input type="checkbox" id="chkIncludeWatchlist">
+          <span>Include movies on your watchlist</span>
+        </label>
+        <p class="hint">Both stay out otherwise, as do blocked movies.</p>
 
-          <label for="inpYear"><strong>Oldest year</strong> to draw from</label>
-          <input id="inpYear" type="number" min="1930" inputmode="numeric" placeholder="blank = all time">
-          <p class="hint">Movies from this year and newer are fair game. Blank means no limit.</p>
-
-          <label for="selObscurity">How well known</label>
-          <select id="selObscurity"></select>
-          <p class="hint">TMDB holds over a million movies, and most of them are shorts and
-            straight-to-video titles almost nobody has rated. The default sticks to films with
-            a real audience behind them. Loosening it finds far more to watch, and more of it
-            will be rough.</p>
-
-          <label>Streaming on</label>
-          <div id="providerChips" class="chips"></div>
-          <p class="hint">Only movies you can watch at no extra cost on the services you pick —
-            included with a subscription, or free with ads. Rentals and purchases don't count.
-            Tap again to clear. US availability, from TMDB.</p>
-
-          <div class="label-row">
-            <label>Genres</label>
-            <div id="genreMode" class="seg" role="group" aria-label="Genre matching">
-              <button type="button" class="seg-btn" data-mode="all">All</button>
-              <button type="button" class="seg-btn" data-mode="any">Any</button>
-            </div>
-          </div>
-          <div id="genreChips" class="chips"><p class="hint">Loading genres…</p></div>
-          <p class="hint" id="genreModeHint"></p>
-
-          <label>Format</label>
-          <div id="mediumChips" class="chips"></div>
-          <p class="hint">How it was made. One at a time — tap again to clear. TMDB tags these
-            by hand, so a format finds what's been tagged, not every film that qualifies.</p>
-
-          <label for="inpActors">Actors / actresses</label>
-          <input id="inpActors" type="text" autocomplete="off" placeholder="e.g. Tom Hanks, Meg Ryan">
-          <p class="hint">Separate names with commas. Movies must feature all of them.</p>
-
-          <label for="inpDirector">Director</label>
-          <input id="inpDirector" type="text" autocomplete="off" placeholder="e.g. Steven Spielberg">
-
-          <label for="inpComposer">Composer</label>
-          <input id="inpComposer" type="text" autocomplete="off" placeholder="e.g. John Williams">
-
-          <label for="inpStudio">Studio</label>
-          <input id="inpStudio" type="text" autocomplete="off" placeholder="e.g. Pixar, A24">
-          <p class="hint">Separate names with commas. A movie matches if any one of them is
-            among its studios, and co-productions list several.</p>
-
-          <label for="selBudget">Budget</label>
-          <select id="selBudget"></select>
-
-          <label for="selRevenue">Box office</label>
-          <select id="selRevenue"></select>
-          <p class="hint">TMDB has no figure on record for plenty of movies. Setting either
-            range leaves those out, and makes finding a pick slower.</p>
-
-          <label class="toggle-row">
-            <input type="checkbox" id="chkEnglish">
-            <span>English-language only</span>
-          </label>
-          <p class="hint">Leaves out foreign-language movies. TMDB publishes nothing about
-            dubbing, so this goes by the movie's own language — it can't tell whether an
-            English dub exists.</p>
-
-          <label class="toggle-row">
-            <input type="checkbox" id="chkIncludeSeen">
-            <span>Include movies you've seen</span>
-          </label>
-
-          <label class="toggle-row">
-            <input type="checkbox" id="chkIncludeWatchlist">
-            <span>Include movies on your watchlist</span>
-          </label>
-          <p class="hint">Both are left out of the picks otherwise, as are blocked movies.
-            Searching by title ignores all of that and finds the movie regardless.</p>
-
-          <label for="selRuntime">Max length</label>
-          <select id="selRuntime"></select>
-        </div>
+        <label for="selRuntime">Max length</label>
+        <select id="selRuntime"></select>
       </section>
     </div>
 

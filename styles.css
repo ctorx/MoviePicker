@@ -399,7 +399,7 @@ button:active { transform: scale(0.98); }
   border-radius: var(--radius);
   background: var(--panel);
 }
-.search-card > h2 {
+.search-card h2 {
   margin: 14px 0 0;
   font-size: 1rem;
   color: var(--muted);
@@ -408,7 +408,15 @@ button:active { transform: scale(0.98); }
 }
 /* The first control in a card sits under its heading, not away from it. */
 .search-card > h2 + .browse-row { margin-top: 12px; }
-.search-card > h2 + .label-row > label { margin-top: 12px; }
+
+/* The Search card's heading shares its line with the Title/Anything toggle,
+   which is the one control that qualifies what the field under it means. */
+.card-head { margin-top: 14px; align-items: center; }
+.card-head h2 { margin: 0; }
+
+/* Each option is a heading for the field under it; the sentence explaining
+   it stays muted, so the two don't compete. */
+.search-card label { font-weight: 600; color: var(--text); }
 
 .browse-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
 .browse-btn {
