@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.37.2";
+const APP_VERSION = "2.37.3";
 
 // ---------- State (localStorage) ----------
 
@@ -1142,11 +1142,32 @@ function rememberMovie(m) {
   }
 }
 
+// Set when a pick lands while the user is somewhere else, holding the movie
+// until they come back to the card (see applyHash).
+let pendingPickId = null;
+
+// Anything with an entry of its own is over the card, not the card.
+function overlayShowing() {
+  const h = location.hash.replace(/^#/, "");
+  return h !== "" && h !== "movie";
+}
+
 // A pick is somewhere you've been: it takes a history entry of its own, so
 // back returns to the movie before it and, eventually, to whatever started
 // the rotation — a search, a list, or another movie's details.
+//
+// Unless the user has opened something in the meantime. A swipe starts a pick
+// that takes a moment to arrive, and a tap on the search icon inside that
+// moment would be undone by the entry pushed here — the screen would open and
+// then close on its own, which reads as a tap that never registered. The
+// movie still renders, on the card behind them, and waits.
 function servePick(details) {
   renderMovie(details);
+  if (overlayShowing()) {
+    pendingPickId = details.id;
+    return;
+  }
+  pendingPickId = null;
   navPushMovie(details.id);
 }
 
@@ -1375,6 +1396,19 @@ function applyHash() {
   // clears the card and holds the next pick until the sheet goes; the entry
   // still names the movie just rated, and restoring it here would both put it
   // back on screen and cancel the pick that was waiting on the sheet.
+  // Back on the card with a pick that landed while something was open over
+  // it: this is the entry that pick belongs to, so it takes it over. Without
+  // this the line below would restore the movie that was showing when the
+  // overlay opened — one the user had already swiped away.
+  //
+  // An entry naming no movie is a rotation about to start, not one being
+  // returned to, and it's left alone to be filled by the pick that follows.
+  if (pendingPickId && !overlayShowing()) {
+    const st = history.state || {};
+    if (st.movieId) history.replaceState({ ...st, movieId: pendingPickId }, "", "#movie");
+    pendingPickId = null;
+  }
+
   const wantId = history.state && history.state.movieId;
   if (!ratingClosed && wantId && (!current || current.id !== wantId)) restoreMovie(wantId);
 }
