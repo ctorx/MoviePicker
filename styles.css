@@ -7,6 +7,9 @@
 :root {
   --bg: #14181c;
   --card: #1e252c;
+  /* Between the page and a control, so a panel holding inputs reads as a
+     surface without flattening the inputs sitting on it. */
+  --panel: #1a2027;
   --border: #3a444e;
   --text: #eef2f5;
   --muted: #9ab;
@@ -385,6 +388,27 @@ button:active { transform: scale(0.98); }
   background: linear-gradient(to top, var(--bg), transparent);
   pointer-events: none;
 }
+
+/* The search screen is two separate offers, not one long form: a list TMDB
+   already keeps, and a search built from the filters. A card around each is
+   what makes it obvious the filters don't reach the buttons above them. */
+.search-card {
+  margin-top: 16px;
+  padding: 4px 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+.search-card > h2 {
+  margin: 14px 0 0;
+  font-size: 1rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+/* The first control in a card sits under its heading, not away from it. */
+.search-card > h2 + .browse-row { margin-top: 12px; }
+.search-card > h2 + .label-row > label { margin-top: 12px; }
 
 .browse-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
 .browse-btn {

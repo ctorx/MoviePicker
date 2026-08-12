@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.35.0";
+const APP_VERSION = "2.36.0";
 
 // ---------- State (localStorage) ----------
 
@@ -512,6 +512,11 @@ function crewOk(m) {
 // fully loaded movie. Needed wherever a candidate didn't come from discover:
 // injected watchlist picks, and title searches (/search/movie takes no filters).
 function matchesSearch(m) {
+  // Quick search is a list TMDB already keeps, offered on its own card away
+  // from the filters. Nothing on the search card reaches it — not the rating
+  // cap, not the year. What's on your lists is a separate matter, and those
+  // still stay out (see excludedIds).
+  if (search.browse) return true;
   if (!certAllowed(m)) return false;
   const year = parseInt((m.release_date || "").slice(0, 4), 10);
   if (search.fromYear && !(year >= search.fromYear)) return false;
@@ -611,7 +616,8 @@ function byMatchThenRelease(query) {
 // stepping through a series costs one request per movie, not five. In broad
 // mode the filters shape the tag half of the pool, so they belong in the key.
 function queryPoolKey() {
-  if (search.browse) return "browse:" + search.browse + ":" + search.maxCert;
+  // No filters feed a quick search, so the list it names is the whole key.
+  if (search.browse) return "browse:" + search.browse;
   if (search.relatedId) return "related:" + search.relatedId;
   return broadSearch()
     ? "any:" + search.query.toLowerCase() + ":" + JSON.stringify(discoverParams(1))
@@ -683,15 +689,11 @@ function browsePage(page) {
     sort_by: "popularity.desc",
     "primary_release_date.gte": day(from),
     "primary_release_date.lte": day(until),
-    // Low enough for a new release, high enough to sift — unless the search
-    // asked to see more obscure things, in which case that wins.
-    "vote_count.gte": String(Math.min(50, obscurityLevel().votes)),
+    // Low enough for a new release, high enough to sift out what nobody has
+    // watched yet. A fixed floor: the search card's settings don't apply here.
+    "vote_count.gte": "50",
     page: String(page),
   };
-  if (search.maxCert) {
-    params.certification_country = "US";
-    params["certification.lte"] = search.maxCert;
-  }
   return ["/discover/movie", params];
 }
 
@@ -927,8 +929,11 @@ async function ensureGenres() {
 // asks for them back.
 function excludedIds() {
   const ids = [...Object.keys(lists.blocked)];
-  if (!search.includeSeen) ids.push(...Object.keys(lists.seen));
-  if (!search.includeWatchlist) ids.push(...Object.keys(lists.watchlist));
+  // The two include switches live on the search card, so a quick search
+  // ignores them along with everything else there: both lists stay out.
+  const quick = !!search.browse;
+  if (quick || !search.includeSeen) ids.push(...Object.keys(lists.seen));
+  if (quick || !search.includeWatchlist) ids.push(...Object.keys(lists.watchlist));
   return new Set(ids.map(Number));
 }
 
@@ -1886,7 +1891,9 @@ function startBrowse(kind) {
   search.query = "";
   search.relatedId = null;
   search.browse = kind;
-  search.advanced = false; // a curated list isn't a search to be narrowed
+  // The advanced box is left exactly as the user had it. Nothing on the
+  // search card reaches a quick search anyway, so switching it off would only
+  // mean coming back to a form that had quietly undone itself.
   sessionShown.clear();
   announceCount = true;
   navPush("movie"); // the search screen stays behind it
