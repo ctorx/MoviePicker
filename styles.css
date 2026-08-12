@@ -410,9 +410,15 @@ button:active { transform: scale(0.98); }
 .search-card > h2 + .browse-row { margin-top: 12px; }
 
 /* The Search card's heading shares its line with the Title/Anything toggle,
-   which is the one control that qualifies what the field under it means. */
-.card-head { margin-top: 14px; align-items: center; }
-.card-head h2 { margin: 0; }
+   which is the one control that qualifies what the field under it means.
+   Both halves centre on each other: .label-row aligns to the bottom, which is
+   right for a label sitting on top of its field but drops the heading below
+   the toggle here. The rule is defined after that one, so this needs the
+   extra specificity to win, and the toggle's own bottom margin has to go with
+   it or it lifts off centre again. */
+.search-card .card-head { margin-top: 14px; align-items: center; }
+.search-card .card-head h2 { margin: 0; }
+.search-card .card-head .seg { margin: 0; }
 
 /* Each option is a heading for the field under it; the sentence explaining
    it stays muted, so the two don't compete. */

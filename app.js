@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.37.0";
+const APP_VERSION = "2.37.1";
 
 // ---------- State (localStorage) ----------
 
