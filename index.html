@@ -306,8 +306,18 @@
       <p id="keyStatus" class="hint" hidden></p>
       <button id="btnSaveKeySettings" class="small">Save key</button>
 
+      <h2>Searching</h2>
+      <label class="toggle-row">
+        <input type="checkbox" id="chkRememberSearch">
+        <span>Remember my search settings</span>
+      </label>
+      <p class="hint">Keeps the last search you ran, filters and all, for the next time you
+        open the app. Off by default, so a search normally lasts the session and no longer.
+        Resetting the search clears what's kept, and so does switching this off.</p>
+
       <h2>Your data</h2>
-      <p class="hint">Backs up your API key, search defaults, and all lists.</p>
+      <p class="hint">Backs up your API key, all your lists, and your search if you're
+        keeping one.</p>
       <div class="row">
         <button id="btnExport" class="small">Export (JSON)</button>
         <button id="btnImport" class="small">Import (JSON)</button>

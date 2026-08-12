@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.34.0";
+const APP_VERSION = "2.35.0";
 
 // ---------- State (localStorage) ----------
 
@@ -18,12 +18,16 @@ const store = {
   },
 };
 
-// The API key is the only thing that outlives the app being closed, and now
-// the only thing stored at all. A search is for the session it was made in:
-// the rating cap, the year and every advanced filter start blank next time,
-// rather than a setting from days ago quietly shaping tonight's picks.
+// A search is for the session it was made in unless you say otherwise: the
+// rating cap, the year and every advanced filter start blank next time,
+// rather than a setting from days ago quietly shaping tonight's picks. The
+// toggle in Settings is how you say otherwise (see saveSearch).
 // Whatever an older version left alongside the key is read past and dropped.
-let settings = { apiKey: String(store.load("mp_settings", {}).apiKey || "") };
+const savedSettings = store.load("mp_settings", {});
+let settings = {
+  apiKey: String(savedSettings.apiKey || ""),
+  rememberSearch: !!savedSettings.rememberSearch,
+};
 let lists = store.load("mp_lists", {});
 normalizeLists();
 
@@ -56,7 +60,12 @@ function normalizeLists() {
   if (changed) saveLists();
 }
 
-function saveSettings() { store.save("mp_settings", { apiKey: settings.apiKey }); }
+function saveSettings() {
+  store.save("mp_settings", {
+    apiKey: settings.apiKey,
+    rememberSearch: settings.rememberSearch,
+  });
+}
 function saveLists() { store.save("mp_lists", lists); }
 
 // Session-only search filters (advanced is off by default on every start).
@@ -93,6 +102,56 @@ const search = {
   includeWatchlist: false,
   maxRuntime: 0, // 0 = no limit
 };
+
+// What a kept search is made of, and what each value has to look like coming
+// back. Storage can hold anything — an old version's shape, a half-written
+// entry — and a filter of the wrong type would misfire with nothing on screen
+// to explain it, so anything that doesn't fit keeps its default instead.
+//
+// A ready-made rotation isn't in here: popular, recent and one movie's
+// recommendations are somewhere you went, not a search you set up, so they
+// never overwrite the search being kept.
+const SAVED_SEARCH = {
+  query: "text", queryMode: "text",
+  maxCert: "text", fromYear: "year", advanced: "flag",
+  genreMode: "text", medium: "text", obscurity: "text",
+  actors: "text", actorIds: "list", actorNames: "list",
+  director: "text", directorIds: "list", directorNames: "list",
+  composer: "text", composerIds: "list", composerNames: "list",
+  studios: "text", studioIds: "list", studioNames: "list",
+  budget: "text", revenue: "text",
+  englishOnly: "flag", includeSeen: "flag", includeWatchlist: "flag",
+  maxRuntime: "count",
+};
+
+function saveSearch() {
+  if (!settings.rememberSearch) return;
+  const out = { genres: [...search.genres], providers: [...search.providers] };
+  for (const k of Object.keys(SAVED_SEARCH)) out[k] = search[k];
+  store.save("mp_search", out);
+}
+
+function forgetSearch() { store.save("mp_search", null); }
+
+function restoreSearch() {
+  if (!settings.rememberSearch) return;
+  const saved = store.load("mp_search", null);
+  if (!saved || typeof saved !== "object") return;
+  for (const [k, kind] of Object.entries(SAVED_SEARCH)) {
+    const v = saved[k];
+    if (kind === "list") { if (Array.isArray(v)) search[k] = v; }
+    else if (kind === "flag") search[k] = !!v;
+    else if (kind === "count") { if (Number.isFinite(v)) search[k] = v; }
+    else if (kind === "year") { if (v === null || Number.isFinite(v)) search[k] = v; }
+    else if (typeof v === "string") search[k] = v;
+  }
+  // Genre ids go straight onto a TMDB request, and a service that no longer
+  // exists is one nothing will ever match.
+  search.genres = new Set((saved.genres || []).filter(Number.isFinite));
+  search.providers = new Set(
+    (saved.providers || []).filter((k) => PROVIDERS.some((p) => p.key === k))
+  );
+}
 
 // ---------- TMDB API ----------
 
@@ -1534,6 +1593,8 @@ function resetSearch() {
   search.maxCert = "";
   search.fromYear = null;
   search.browse = "";
+  // A reset is the other way to stop a kept search from following you around.
+  forgetSearch();
   fillSearchForm();
   showToast("Search reset to defaults", null, 2000);
 }
@@ -1697,6 +1758,7 @@ $("btnApplySearch").addEventListener("click", async () => {
       search.studioIds = [];
       search.studioNames = [];
     }
+    saveSearch();
     sessionShown.clear();
     announceCount = true;
     // Not navBack: the search screen stays in history, so back from the
@@ -1879,6 +1941,7 @@ function forceSearchFor(kind, id, name) {
   }
   search.maxCert = "";
   search.fromYear = null;
+  saveSearch(); // tapping a name sets up a real search, so it's the one to keep
   sessionShown.clear();
   announceCount = true;
   navPush("movie"); // whatever was on screen stays behind it
@@ -2514,12 +2577,29 @@ function hideToast() {
 
 function openSettings() {
   $("inpKeySettings").value = settings.apiKey;
+  $("chkRememberSearch").checked = settings.rememberSearch;
   $("keyStatus").hidden = true;
   $("updateStatus").hidden = true;
   $("btnApplyUpdate").hidden = true;
   $("versionText").textContent = "v" + APP_VERSION;
   navPush("settings");
 }
+
+// Switching it on keeps whatever search is running right now, rather than
+// waiting for the next one to be applied. Switching it off forgets it.
+$("chkRememberSearch").addEventListener("change", () => {
+  settings.rememberSearch = $("chkRememberSearch").checked;
+  saveSettings();
+  if (settings.rememberSearch) saveSearch();
+  else forgetSearch();
+  showToast(
+    settings.rememberSearch
+      ? "Your search will be waiting next time"
+      : "Searches will last the session only",
+    null,
+    2500
+  );
+});
 
 $("btnSaveKeySettings").addEventListener("click", async () => {
   const status = $("keyStatus");
@@ -2552,6 +2632,7 @@ $("btnExport").addEventListener("click", () => {
     exported: new Date().toISOString(),
     settings,
     lists,
+    savedSearch: store.load("mp_search", null),
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
   const a = document.createElement("a");
@@ -2572,13 +2653,18 @@ $("fileImport").addEventListener("change", async () => {
     if (!data || typeof data !== "object" || !data.settings || !data.lists) {
       throw new Error("bad shape");
     }
-    // Only the key is worth carrying over; a backup's search values belong to
-    // the session it was taken in, and the reload below would drop them anyway.
-    settings = { apiKey: String(data.settings.apiKey || "") };
+    settings = {
+      apiKey: String(data.settings.apiKey || ""),
+      rememberSearch: !!data.settings.rememberSearch,
+    };
     lists = data.lists;
     normalizeLists();
     saveSettings();
     saveLists();
+    // A search only travels with a backup that was keeping one. The reload
+    // below is what puts it back on the form.
+    if (settings.rememberSearch && data.savedSearch) store.save("mp_search", data.savedSearch);
+    else forgetSearch();
     showToast("Import complete — reloading…");
     setTimeout(() => location.reload(), 900);
   } catch {
@@ -2680,6 +2766,8 @@ $("btnRetry").addEventListener("click", pickMovie);
 history.replaceState({ depth: 0 }, "", location.pathname + location.search);
 
 refreshCounts();
+// Before the first pick, so a kept search is the one that runs.
+restoreSearch();
 
 if (!settings.apiKey) {
   show("screen-setup");
