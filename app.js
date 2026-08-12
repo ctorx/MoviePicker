@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.33.0";
+const APP_VERSION = "2.34.0";
 
 // ---------- State (localStorage) ----------
 
@@ -2106,14 +2106,24 @@ function endDrag(e) {
     swipeOut("y", -1, skipCurrent);
   } else if (axis === "y" && dy > 90) {
     const watched = current;
+    const wasSaved = watched && lists.watchlist[watched.id];
     swipeOut("y", 1, () => {
       // Filed as seen straight away, so a dismissed rating still counts — but
       // the next movie is held back until the sheet closes, leaving the one
       // being rated on screen behind it instead of the next one.
       markCurrent("seen", false);
       const entry = watched && lists.seen[watched.id];
-      if (entry) openRating(watched.id, entry, pickMovie);
-      else pickMovie();
+      if (!entry) return pickMovie();
+      openRating(watched.id, entry, pickMovie, () => {
+        // Swiped down by mistake: undo the filing, put it back on the
+        // watchlist if that's where it came from, and show it again rather
+        // than moving on to the next movie.
+        delete lists.seen[watched.id];
+        if (wasSaved) lists.watchlist[watched.id] = wasSaved;
+        saveLists();
+        refreshCounts();
+        renderMovie(watched);
+      });
     });
   } else {
     snapBack();
@@ -2162,6 +2172,7 @@ function renderStars(box, rating, onPick) {
 let ratingTarget = null; // { id, entry } being rated
 let ratingUnder = ""; // hash of the screen the sheet opened over
 let ratingAfter = null; // held until the sheet closes — see the swipe handler
+let ratingUndo = null; // how to take the "seen" back, where that's an option
 let ratingPicked = false; // a second pointer event mustn't navigate back twice
 
 // However the sheet is dismissed — a star, Skip, or the back button — whatever
@@ -2170,16 +2181,22 @@ function closeRating() {
   const after = ratingAfter;
   ratingTarget = null;
   ratingAfter = null;
+  ratingUndo = null;
   // Off the popstate turn that closed the sheet. What follows is often another
   // navigation — back to the list the movie came from — and browsers are not
   // uniformly happy about being asked to navigate from inside a popstate.
   if (after) setTimeout(after, 0);
 }
 
-function openRating(id, entry, after) {
+// `undo` is offered only where there's something to take back: a swipe that
+// filed the movie as seen. Rating one already on the seen list has nothing to
+// undo, so the link stays hidden there.
+function openRating(id, entry, after, undo) {
   ratingTarget = { id: String(id), entry };
   ratingPicked = false;
   ratingAfter = after || null;
+  ratingUndo = undo || null;
+  $("btnRateOops").hidden = !undo;
   ratingUnder = location.hash.replace(/^#/, "");
   $("rateMovie").textContent = entry.title + (entry.year ? " (" + entry.year + ")" : "");
   renderStars($("rateStars"), entry.rating || 0, (n) => {
@@ -2196,6 +2213,15 @@ function openRating(id, entry, after) {
 }
 
 $("btnRateSkip").addEventListener("click", navBack);
+
+// Backing out replaces whatever the sheet was going to do next: instead of
+// moving on to another movie, it puts this one back the way it was.
+$("btnRateOops").addEventListener("click", () => {
+  if (ratingPicked || !ratingTarget || !ratingUndo) return;
+  ratingPicked = true;
+  ratingAfter = ratingUndo;
+  navBack();
+});
 
 // ---------- Saved lists (drawer) ----------
 

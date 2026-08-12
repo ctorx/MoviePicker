@@ -685,6 +685,13 @@ button:active { transform: scale(0.98); }
 .sheet h2 { margin: 0; }
 .sheet .hint { margin-top: 4px; }
 
+/* The way out of a mis-swipe, sat under the rating it's backing out of.
+   Quieter than Skip, which is a different answer to the same question. */
+.undo-btn {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
 /* ---------- Drawer ---------- */
 
 .overlay {
