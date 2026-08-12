@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.32.1";
+const APP_VERSION = "2.33.0";
 
 // ---------- State (localStorage) ----------
 
@@ -84,6 +84,8 @@ const search = {
   studioIds: [],
   studioNames: [],
   medium: "", // production format, one at a time (see MEDIUMS)
+  obscurity: "known", // how far below the popularity floor picks may go (see OBSCURITY)
+  providers: new Set(), // streaming services picks must be available on (see PROVIDERS)
   budget: "", // MONEY range key, "" = any
   revenue: "",
   englishOnly: false,
@@ -119,7 +121,7 @@ function tmdbFetch(path, params = {}) {
 // Everything a pick needs to be verified and rendered, in one request.
 function fetchMovie(id) {
   return tmdbFetch("/movie/" + id, {
-    append_to_response: "credits,videos,release_dates,keywords",
+    append_to_response: "credits,videos,release_dates,keywords,watch/providers",
   });
 }
 
@@ -293,19 +295,102 @@ function studioOk(m) {
   return (m.production_companies || []).some((c) => search.studioIds.includes(c.id));
 }
 
-// Enough votes for the score to mean something, and a floor that keeps picks
-// watchable. Discover applies these; a subject search applies them itself.
-const MIN_VOTES = 200;
-const MIN_SCORE = 6;
+// How obscure a pick is allowed to get.
+//
+// TMDB holds over a million movies, and most of them are shorts, festival
+// entries and straight-to-video titles with a handful of votes. A vote floor
+// is what keeps a pick watchable, but it's the user's call, so it's a setting
+// rather than a rule — the trade-off is spelled out on the search screen.
+//
+// Depth is the other half of it, and the reason the loosest setting still
+// works. Picks come from a random page of a list sorted by popularity, so how
+// far down that list we're willing to reach decides what turns up. Sampled
+// against TMDB on 2026-08-12 (comedy, PG-13, 2010 and newer): with the strict
+// floor, page 25 of 44 was still all well-known films; with no floor at all,
+// page 25 was fine, page 50 was a quarter no-name titles and page 150 was
+// almost nothing else. So the weaker the floor, the shallower we sample.
+const OBSCURITY = [
+  { key: "known", label: "Well-known movies only", votes: 200, score: 6, depth: 300 },
+  { key: "lesser", label: "Include lesser-known movies", votes: 25, score: 0, depth: 50 },
+  { key: "any", label: "Anything at all", votes: 0, score: 0, depth: 40 },
+];
+
+// An advanced filter like any other: switching the box off puts the default
+// floor back, and so do the ready-made lists, which aren't a search to narrow.
+const obscurityLevel = () =>
+  (search.advanced && OBSCURITY.find((o) => o.key === search.obscurity)) || OBSCURITY[0];
+
+// Streaming services, with TMDB's ids for them (checked for the US region on
+// 2026-08-12). TMDB lists 291 providers, most of them single-subject channels
+// nobody subscribes to; these are the ones worth a chip. A service can be sold
+// direct and as a channel inside someone else's store, and TMDB gives each of
+// those its own id, so one service is a list of ids.
+const PROVIDERS = [
+  { key: "netflix", label: "Netflix", ids: [8, 1796] },
+  { key: "prime", label: "Prime Video", ids: [9, 2100] },
+  { key: "disney", label: "Disney+", ids: [337] },
+  { key: "hulu", label: "Hulu", ids: [15] },
+  { key: "max", label: "HBO Max", ids: [1899, 1825] },
+  { key: "appletv", label: "Apple TV+", ids: [350, 2243] },
+  { key: "paramount", label: "Paramount+", ids: [2616, 2303, 582, 633] },
+  { key: "peacock", label: "Peacock", ids: [386, 387, 2553] },
+  { key: "starz", label: "Starz", ids: [43, 1794, 1855, 634] },
+  { key: "amc", label: "AMC+", ids: [526, 528, 635, 1854] },
+  { key: "shudder", label: "Shudder", ids: [99, 204, 2049] },
+  { key: "criterion", label: "Criterion", ids: [258] },
+  { key: "britbox", label: "BritBox", ids: [151, 197, 1852] },
+  { key: "crunchyroll", label: "Crunchyroll", ids: [283, 1968] },
+  { key: "tubi", label: "Tubi", ids: [73] },
+  { key: "pluto", label: "Pluto TV", ids: [300] },
+  { key: "roku", label: "Roku Channel", ids: [207] },
+  { key: "plex", label: "Plex", ids: [538, 2077] },
+  { key: "kanopy", label: "Kanopy", ids: [191] },
+  { key: "hoopla", label: "Hoopla", ids: [212] },
+];
+
+// TMDB's availability data is per country, and the rest of the app is already
+// US-only (certifications come from there too).
+const WATCH_REGION = "US";
+// Included with a subscription, free, or free with ads — never rent or buy.
+const WATCH_TYPES = "flatrate|free|ads";
+
+function providerIds() {
+  const ids = [];
+  for (const p of PROVIDERS) if (search.providers.has(p.key)) ids.push(...p.ids);
+  return ids;
+}
+
+function providerLabels() {
+  return PROVIDERS.filter((p) => search.providers.has(p.key)).map((p) => p.label);
+}
+
+// Where a movie can be watched at no extra cost, deduplicated: a service that
+// sells itself twice over is still one place to watch.
+function watchOptions(m) {
+  const region = (m["watch/providers"]?.results || {})[WATCH_REGION] || {};
+  const all = [...(region.flatrate || []), ...(region.free || []), ...(region.ads || [])];
+  return [...new Map(all.map((p) => [p.provider_id, p])).values()];
+}
+
+// Discover filters by service server-side. A title search, a related list and
+// a browse list don't, so the loaded movie gets checked against the same set.
+function providerOk(m) {
+  if (!search.advanced || !search.providers.size) return true;
+  const want = new Set(providerIds());
+  return watchOptions(m).some((p) => want.has(p.provider_id));
+}
 
 function discoverParams(page) {
+  const floor = obscurityLevel();
   const p = {
     sort_by: "popularity.desc",
     include_adult: "false",
-    "vote_count.gte": String(MIN_VOTES), // enough votes that the score means something
-    "vote_average.gte": String(MIN_SCORE), // quality floor so picks are watchable
     page: String(page),
   };
+  // Enough votes that the score means something, and a floor that keeps picks
+  // watchable. Discover applies these; a subject search applies them itself.
+  if (floor.votes) p["vote_count.gte"] = String(floor.votes);
+  if (floor.score) p["vote_average.gte"] = String(floor.score);
   if (search.maxCert) {
     p.certification_country = "US";
     p["certification.lte"] = search.maxCert;
@@ -322,13 +407,21 @@ function discoverParams(page) {
     const crewIds = [...search.directorIds, ...search.composerIds];
     if (crewIds.length) p.with_crew = crewIds.join(",");
     if (search.actorIds.length || crewIds.length) {
-      // Personal filmographies are small; the popularity floors would empty them out.
-      p["vote_count.gte"] = "10";
+      // Personal filmographies are small; the popularity floors would empty
+      // them out. Only ever loosens — a level set below this keeps its own.
+      if (floor.votes > 10) p["vote_count.gte"] = "10";
       delete p["vote_average.gte"];
     }
     // A film matches if the studio is any one of its production companies,
     // and if several were typed, any one of those counts.
     if (search.studioIds.length) p.with_companies = search.studioIds.join("|");
+    // Any one of the chosen services will do, and rentals don't count.
+    const provs = providerIds();
+    if (provs.length) {
+      p.with_watch_providers = provs.join("|");
+      p.watch_region = WATCH_REGION;
+      p.with_watch_monetization_types = WATCH_TYPES;
+    }
     if (search.englishOnly) p.with_original_language = "en";
     if (search.maxRuntime) p["with_runtime.lte"] = String(search.maxRuntime);
     mediumParams(p);
@@ -373,7 +466,7 @@ function matchesSearch(m) {
     if (!ok) return false;
   }
   if (search.maxRuntime && m.runtime && m.runtime > search.maxRuntime) return false;
-  if (!mediumOk(m) || !moneyOk(m) || !englishOk(m) || !studioOk(m)) return false;
+  if (!mediumOk(m) || !moneyOk(m) || !englishOk(m) || !studioOk(m) || !providerOk(m)) return false;
   const cast = m.credits?.cast || [];
   if (!search.actorIds.every((id) => cast.some((c) => c.id === id))) return false;
   return crewOk(m);
@@ -383,6 +476,18 @@ function matchesSearch(m) {
 // crew job behind a with_crew hit, and the money figures discover can't filter.
 function verifyPick(m) {
   return certAllowed(m) && crewOk(m) && moneyOk(m);
+}
+
+// Order means nothing in a pool that gets shuffled, but what's in it does.
+// Neither TMDB's search nor its recommendations carry a quality floor, so
+// this applies whichever one the search asked for.
+function worthWatching(movies) {
+  const floor = obscurityLevel();
+  if (!floor.votes && !floor.score) return movies;
+  const worth = movies.filter(
+    (m) => (m.vote_count || 0) >= floor.votes && (m.vote_average || 0) >= floor.score
+  );
+  return worth.length ? worth : movies;
 }
 
 // ---------- Query lookups ----------
@@ -406,16 +511,6 @@ const titleLookup = () => !!search.query && search.queryMode === "title";
 
 // Either of these replaces discover with a pool of its own.
 const fixedPool = () => !!search.query || !!search.relatedId || !!search.browse;
-
-// Order means nothing in a pool that gets shuffled, but what's in it does.
-// Neither TMDB's search nor its recommendations carry a quality floor, so
-// this applies the one discover would have.
-function worthWatching(movies) {
-  const worth = movies.filter(
-    (m) => (m.vote_count || 0) >= MIN_VOTES && (m.vote_average || 0) >= MIN_SCORE
-  );
-  return worth.length ? worth : movies;
-}
 
 function titleWords(s) {
   return s.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, " ").trim().split(" ");
@@ -464,7 +559,7 @@ function queryPoolKey() {
     : "title:" + search.query.toLowerCase();
 }
 
-let queryPool = { key: null, movies: [], total: 0 };
+let queryPool = { key: null, movies: [], total: 0, done: true };
 
 // The tags TMDB knows for this word — "zombie", "time travel", "dystopia".
 //
@@ -529,7 +624,9 @@ function browsePage(page) {
     sort_by: "popularity.desc",
     "primary_release_date.gte": day(from),
     "primary_release_date.lte": day(until),
-    "vote_count.gte": "50", // low enough for a new release, high enough to sift
+    // Low enough for a new release, high enough to sift — unless the search
+    // asked to see more obscure things, in which case that wins.
+    "vote_count.gte": String(Math.min(50, obscurityLevel().votes)),
     page: String(page),
   };
   if (search.maxCert) {
@@ -539,94 +636,129 @@ function browsePage(page) {
   return ["/discover/movie", params];
 }
 
+// A pool loads a few pages before the first pick and more as you swipe, so a
+// search runs out when TMDB does rather than when the opening fetch did.
+// Pages are 20 movies, so the cap below is 500 of them.
+const POOL_MAX_PAGES = 25;
+const POOL_TOP_UP = 3; // pages pulled in at a time once it starts running low
+const POOL_LOW_WATER = 15; // unseen movies left before topping up
+const POOL_TOP_UPS_PER_PICK = 3; // stops a heavily filtered pool loading all night
+
+// Sources are read in order and each knows when it's spent. A subject search
+// has two: TMDB's title matches, then the movies tagged with that topic.
+function poolSource(fetch, maxPages) {
+  return { fetch, maxPages, page: 0, done: false, total: 0 };
+}
+
+// How many of a source's movies this search could ever reach: what TMDB says
+// it holds, or as deep as we're willing to page, whichever runs out first.
+const sourceReach = (src) => Math.min(src.total, src.maxPages * 20);
+
+// Pulls pages from the first source with any left. Returns false if a newer
+// pick has started, in which case the pool is left exactly as it was.
+async function growPool(pool, pages, token) {
+  for (let i = 0; i < pages; i++) {
+    const src = pool.sources.find((s) => !s.done);
+    if (!src) break;
+    const data = await src.fetch(src.page + 1);
+    if (token !== pickToken) return false;
+    src.page++;
+    src.total = data.total_results || 0;
+    if (src.page >= Math.min(data.total_pages || 1, src.maxPages)) src.done = true;
+    for (const m of data.results || []) {
+      if (pool.ids.has(m.id)) continue;
+      pool.ids.add(m.id);
+      pool.from.set(m.id, src);
+      pool.raw.push(m);
+    }
+  }
+  pool.done = pool.sources.every((s) => s.done);
+  pool.finish(pool);
+  return true;
+}
+
 async function ensureQueryPool(token) {
   const key = queryPoolKey();
   if (queryPool.key === key) return true;
 
-  // Ready-made lists. Popular is TMDB's own; recent is a discover search over
-  // the last few months, because TMDB's now_playing list isn't what its name
-  // suggests — it hands back films years old alongside this month's.
+  const pool = {
+    key, raw: [], ids: new Set(), from: new Map(), movies: [], total: 0,
+    sources: [], done: false, opening: 4, finish: null,
+  };
+
   if (search.browse) {
-    const found = [];
-    for (let page = 1; page <= 3; page++) {
-      const data = await tmdbFetch(...browsePage(page));
-      if (token !== pickToken) return false;
-      found.push(...data.results);
-      if (page >= data.total_pages) break;
-    }
-    queryPool = { key, movies: found, total: found.length };
-    return true;
-  }
-
-  // TMDB's own recommendations: what people who liked this one went on to
-  // like. Three pages is plenty — the tail gets thin.
-  if (search.relatedId) {
-    const found = [];
-    for (let p = 1; p <= 3; p++) {
-      const data = await tmdbFetch("/movie/" + search.relatedId + "/recommendations",
-        { page: String(p) });
-      if (token !== pickToken) return false;
-      found.push(...data.results.filter((m) => m.id !== search.relatedId));
-      if (p >= data.total_pages) break;
-    }
-    const pool = worthWatching(found);
-    queryPool = { key, movies: pool, total: pool.length };
-    return true;
-  }
-
-  const searchPage = (page) =>
-    tmdbFetch("/search/movie", {
-      query: search.query,
-      include_adult: "false",
-      page: String(page),
-    });
-
-  const first = await searchPage(1);
-  if (token !== pickToken) return false;
-  const movies = [...first.results];
-  // Title mode walks a whole series, so it takes the long tail. A broad query
-  // only needs TMDB's best title matches — the rest is padding it would sort
-  // to the bottom anyway, and every page is another request.
-  const titlePages = broadSearch() ? 2 : 5;
-  for (let p = 2; p <= Math.min(first.total_pages, titlePages); p++) {
-    const data = await searchPage(p);
-    if (token !== pickToken) return false;
-    movies.push(...data.results);
-  }
-
-  if (broadSearch()) {
-    const ids = await topicKeywordIds(search.query);
-    if (token !== pickToken) return false;
-    if (ids.length) {
-      const seen = new Set(movies.map((m) => m.id));
-      for (let p = 1; p <= 3; p++) {
-        // The current filters apply, except with_keywords, which the topic
-        // takes over — a chosen format is still checked on each pick.
-        const params = { ...discoverParams(p), with_keywords: ids.join("|") };
-        const data = await tmdbFetch("/discover/movie", params);
-        if (token !== pickToken) return false;
-        for (const m of data.results) {
-          if (!seen.has(m.id)) {
-            seen.add(m.id);
-            movies.push(m);
-          }
-        }
-        if (p >= data.total_pages) break;
-      }
-    }
-  }
-
-  let pool = movies;
-  if (broadSearch()) {
-    // Title results carry no quality floor of their own, so a subject search
-    // would otherwise mix Interstellar with forty straight-to-video films
-    // that happen to have the word in the title. Order doesn't matter here —
-    // picks are shuffled — but which movies are in the pool does.
-    pool = worthWatching(movies);
+    // Ready-made lists. Popular is TMDB's own; recent is a discover search
+    // over the last few months, because TMDB's now_playing list isn't what
+    // its name suggests — it hands back films years old alongside this
+    // month's.
+    pool.sources.push(poolSource((p) => tmdbFetch(...browsePage(p)), POOL_MAX_PAGES));
+    pool.finish = (pl) => {
+      pl.movies = pl.raw;
+      pl.total = sourceReach(pl.sources[0]);
+    };
+  } else if (search.relatedId) {
+    // TMDB's own recommendations: what people who liked this one went on to
+    // like. The tail gets thin, so this one usually stops on its own.
+    pool.opening = 3;
+    pool.sources.push(poolSource(
+      (p) => tmdbFetch("/movie/" + search.relatedId + "/recommendations", { page: String(p) }),
+      POOL_MAX_PAGES
+    ));
+    pool.finish = (pl) => {
+      pl.movies = worthWatching(pl.raw.filter((m) => m.id !== search.relatedId));
+      pl.total = pl.movies.length;
+    };
   } else {
-    pool.sort(byMatchThenRelease(search.query));
+    const titleFetch = (p) =>
+      tmdbFetch("/search/movie", {
+        query: search.query,
+        include_adult: "false",
+        page: String(p),
+      });
+
+    if (!broadSearch()) {
+      // A title walks a whole series in release order, so it takes the tail.
+      pool.opening = 5;
+      pool.sources.push(poolSource(titleFetch, POOL_MAX_PAGES));
+      pool.finish = (pl) => {
+        pl.movies = pl.raw.slice().sort(byMatchThenRelease(search.query));
+        pl.total = sourceReach(pl.sources[0]);
+      };
+    } else {
+      // A subject needs only TMDB's best title matches — past those it's
+      // padding that would sort to the bottom anyway. The tagged movies are
+      // where the depth is, so that's the source that keeps going.
+      const titleSrc = poolSource(titleFetch, 3);
+      pool.sources.push(titleSrc);
+      pool.opening = 7;
+      const ids = await topicKeywordIds(search.query);
+      if (token !== pickToken) return false;
+      if (ids.length) {
+        pool.sources.push(poolSource(
+          // The current filters apply, except with_keywords, which the topic
+          // takes over — a chosen format is still checked on each pick.
+          (p) => tmdbFetch("/discover/movie",
+            { ...discoverParams(p), with_keywords: ids.join("|") }),
+          POOL_MAX_PAGES
+        ));
+      }
+      pool.finish = (pl) => {
+        // Title results carry no quality floor of their own, so a subject
+        // search would otherwise mix Interstellar with forty straight-to-video
+        // films that happen to have the word in the title.
+        pl.movies = worthWatching(pl.raw);
+        // What the search can reach: every tagged movie TMDB has, plus the
+        // title matches good enough to keep. Counting all the title hits
+        // instead would promise hundreds the floor is about to throw out.
+        const tags = pl.sources[1];
+        const kept = pl.movies.filter((m) => pl.from.get(m.id) === titleSrc).length;
+        pl.total = (tags ? sourceReach(tags) : 0) + kept;
+      };
+    }
   }
-  queryPool = { key, movies: pool, total: broadSearch() ? pool.length : first.total_results };
+
+  if (!(await growPool(pool, pool.opening, token))) return false;
+  queryPool = pool;
   return true;
 }
 
@@ -647,7 +779,22 @@ async function pickFromQuery(token) {
   // Saved, seen or blocked, it's spoken for and stays out of the picks — but
   // never out of a title lookup, which is someone asking for one movie by name.
   const excluded = titleLookup() ? new Set() : excludedIds();
-  const usable = queryPool.movies.filter((m) => m.poster_path && !excluded.has(m.id));
+  const pickable = () => queryPool.movies.filter((m) => m.poster_path && !excluded.has(m.id));
+  let usable = pickable();
+  let unseen = usable.filter((m) => !sessionShown.has(m.id));
+
+  // Running low with more to be had: top the pool up before it bottoms out.
+  // The count guards a pool being emptied faster than it fills — a search
+  // whose every match is already on a list would otherwise page to the end.
+  for (let i = 0; i < POOL_TOP_UPS_PER_PICK; i++) {
+    if (queryPool.done || unseen.length >= POOL_LOW_WATER) break;
+    const before = queryPool.raw.length;
+    if (!(await growPool(queryPool, POOL_TOP_UP, token))) return;
+    if (queryPool.raw.length === before) break;
+    usable = pickable();
+    unseen = usable.filter((m) => !sessionShown.has(m.id));
+  }
+
   if (!usable.length) {
     showPickError(
       search.browse ? "Nothing left in that list to show you."
@@ -655,7 +802,7 @@ async function pickFromQuery(token) {
       : 'No movies found for "' + search.query + '". Check the spelling, or try fewer words.');
     return;
   }
-  let fresh = usable.filter((m) => !sessionShown.has(m.id));
+  let fresh = unseen;
   if (!fresh.length) {
     // Been through them all this session — start over.
     sessionShown.clear();
@@ -693,6 +840,8 @@ function searchSummary() {
       bits.push(names.join(search.genreMode === "any" ? " or " : " + "));
     }
     if (search.medium) bits.push(mediumByKey(search.medium).label.toLowerCase());
+    if (search.obscurity !== "known") bits.push(obscurityLevel().label.toLowerCase());
+    if (search.providers.size) bits.push("on " + providerLabels().join(" or "));
     if (search.actorNames.length) bits.push("with " + search.actorNames.join(" & "));
     if (search.directorNames.length) bits.push("directed by " + search.directorNames.join(" & "));
     if (search.composerNames.length) bits.push("music by " + search.composerNames.join(" & "));
@@ -809,8 +958,13 @@ async function pickMovie() {
       return;
     }
 
-    // TMDB caps discover at 500 pages; stay well inside it.
-    const totalPages = Math.min(first.total_pages, moneySorted() ? MONEY_SORT_PAGES : 300);
+    // How deep into the list a random page may land. TMDB caps discover at 500
+    // pages and we stay well inside that; with a weak vote floor, popularity is
+    // the only thing keeping picks watchable, so the level sets how far to go.
+    const totalPages = Math.min(
+      first.total_pages,
+      moneySorted() ? MONEY_SORT_PAGES : obscurityLevel().depth
+    );
     const tried = new Set();
 
     for (let attempt = 0; attempt < 10; attempt++) {
@@ -1281,6 +1435,38 @@ function renderMediumChips() {
   }
 }
 
+// Several at once, and any one of them will do: the question is what's
+// watchable tonight, not what's on every service you pay for.
+function renderProviderChips() {
+  const box = $("providerChips");
+  box.innerHTML = "";
+  for (const p of PROVIDERS) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "chip";
+    chip.textContent = p.label;
+    chip.classList.toggle("active", search.providers.has(p.key));
+    chip.addEventListener("click", () => {
+      if (search.providers.has(p.key)) search.providers.delete(p.key);
+      else search.providers.add(p.key);
+      chip.classList.toggle("active");
+    });
+    box.appendChild(chip);
+  }
+}
+
+function buildObscurityOptions() {
+  const sel = $("selObscurity");
+  sel.innerHTML = "";
+  for (const o of OBSCURITY) {
+    const opt = document.createElement("option");
+    opt.value = o.key;
+    opt.textContent = o.label;
+    sel.appendChild(opt);
+  }
+  sel.value = search.obscurity;
+}
+
 function buildMoneyOptions(id, ranges, current) {
   const sel = $(id);
   sel.innerHTML = "";
@@ -1331,6 +1517,8 @@ function resetSearch() {
   search.genres.clear();
   search.genreMode = "all";
   search.medium = "";
+  search.obscurity = "known";
+  search.providers.clear();
   search.actors = ""; search.actorIds = []; search.actorNames = [];
   search.director = ""; search.directorIds = []; search.directorNames = [];
   search.composer = ""; search.composerIds = []; search.composerNames = [];
@@ -1365,12 +1553,14 @@ function fillSearchForm() {
   $("chkIncludeSeen").checked = search.includeSeen;
   $("chkIncludeWatchlist").checked = search.includeWatchlist;
   buildRuntimeOptions();
+  buildObscurityOptions();
   buildMoneyOptions("selBudget", BUDGET_RANGES, search.budget);
   buildMoneyOptions("selRevenue", REVENUE_RANGES, search.revenue);
   renderGenreMode();
   if (search.advanced) {
     renderGenreChips();
     renderMediumChips();
+    renderProviderChips();
   }
   $("searchError").hidden = true;
 }
@@ -1391,6 +1581,7 @@ $("chkAdvanced").addEventListener("change", () => {
   if ($("chkAdvanced").checked) {
     renderGenreChips();
     renderMediumChips();
+    renderProviderChips();
   }
 });
 
@@ -1461,6 +1652,7 @@ $("btnApplySearch").addEventListener("click", async () => {
       search.director = $("inpDirector").value;
       search.composer = $("inpComposer").value;
       search.studios = $("inpStudio").value;
+      search.obscurity = $("selObscurity").value;
       search.budget = $("selBudget").value;
       search.revenue = $("selRevenue").value;
       search.englishOnly = $("chkEnglish").checked;
@@ -1494,6 +1686,8 @@ $("btnApplySearch").addEventListener("click", async () => {
       search.fromYear = null;
       search.includeSeen = false;
       search.includeWatchlist = false;
+      search.obscurity = "known";
+      search.providers.clear();
       search.actorIds = [];
       search.actorNames = [];
       search.directorIds = [];
@@ -1567,6 +1761,12 @@ function openInfo(replace) {
   const money = (n) =>
     n >= 1e6 ? "$" + (n / 1e6).toFixed(n >= 1e8 ? 0 : 1) + "M" : "$" + n.toLocaleString();
   const rows = [];
+  // Where it can be watched without paying on top, from TMDB's JustWatch feed.
+  // Silence means TMDB has no US listing, which isn't the same as nowhere.
+  const watch = watchOptions(m);
+  if (watch.length) {
+    rows.push(["Streaming", watch.map((p) => p.provider_name).slice(0, 6).join(", ")]);
+  }
   const writers = [...new Set(
     [...crewPeople("Screenplay"), ...crewPeople("Writer")].map((c) => c.name)
   )];
@@ -1656,6 +1856,8 @@ function forceSearchFor(kind, id, name) {
   search.genres.clear();
   search.genreMode = "all";
   search.medium = "";
+  search.obscurity = "known";
+  search.providers.clear();
   search.budget = "";
   search.revenue = "";
   search.englishOnly = false;

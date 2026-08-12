@@ -129,6 +129,19 @@
         <input id="inpYear" type="number" min="1930" inputmode="numeric" placeholder="blank = all time">
         <p class="hint">Movies from this year and newer are fair game. Blank means no limit.</p>
 
+        <label for="selObscurity">How well known</label>
+        <select id="selObscurity"></select>
+        <p class="hint">TMDB holds over a million movies, and most of them are shorts and
+          straight-to-video titles almost nobody has rated. The default sticks to films with
+          a real audience behind them. Loosening it finds far more to watch, and more of it
+          will be rough.</p>
+
+        <label>Streaming on</label>
+        <div id="providerChips" class="chips"></div>
+        <p class="hint">Only movies you can watch at no extra cost on the services you pick —
+          included with a subscription, or free with ads. Rentals and purchases don't count.
+          Tap again to clear. US availability, from TMDB.</p>
+
         <div class="label-row">
           <label>Genres</label>
           <div id="genreMode" class="seg" role="group" aria-label="Genre matching">
