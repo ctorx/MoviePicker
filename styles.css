@@ -416,7 +416,7 @@ button:active { transform: scale(0.98); }
    the toggle here. The rule is defined after that one, so this needs the
    extra specificity to win, and the toggle's own bottom margin has to go with
    it or it lifts off centre again. */
-.search-card .card-head { margin-top: 14px; align-items: center; }
+.search-card .card-head { margin: 14px 0 10px; align-items: center; }
 .search-card .card-head h2 { margin: 0; }
 .search-card .card-head .seg { margin: 0; }
 
