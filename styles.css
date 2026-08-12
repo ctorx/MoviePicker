@@ -732,9 +732,10 @@ button:active { transform: scale(0.98); }
 
 /* The sheet's two links sit exactly where a swipe just finished, so they get
    the same handling as the stars beside them: a target big enough to hit at
-   arm's length, and no shrink under the finger, which on a small target can
-   pull the edge out from under the tap that's landing on it. */
-.sheet .link-btn { padding: 12px 16px; }
+   arm's length, and no shrink under the finger. A block-level button is only
+   as wide as its text, so "Skip" was a target about the width of the word;
+   full width leaves nothing for a thumb to roll off. */
+.sheet .link-btn { width: 100%; padding: 12px 16px; }
 .sheet .link-btn:active { transform: none; }
 
 /* The way out of a mis-swipe, sat under the rating it's backing out of.

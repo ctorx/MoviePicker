@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "2.37.4";
+const APP_VERSION = "2.37.5";
 
 // ---------- State (localStorage) ----------
 
@@ -2271,14 +2271,30 @@ function openRating(id, entry, after, undo) {
   navPush("rate");
 }
 
-$("btnRateSkip").addEventListener("click", navBack);
+// Both links answer to the touch landing, not to a click, for the same reason
+// the stars beside them do: a click needs the finger to land and lift on the
+// same element, and on a sheet that has just appeared under a thumb still
+// moving from the swipe that opened it, it often doesn't. That was a link
+// that needed pressing twice.
+function onSheetPress(id, run) {
+  const press = (e) => {
+    if (!ratingTarget || ratingPicked) return;
+    if (e && e.cancelable) e.preventDefault(); // and no ghost click behind it
+    ratingPicked = true;
+    run();
+  };
+  $(id).addEventListener("pointerdown", press);
+  // A click carrying no pointer detail came from a keyboard or a screen
+  // reader, which never sends pointerdown at all.
+  $(id).addEventListener("click", (e) => { if (!e.detail) press(e); });
+}
+
+onSheetPress("btnRateSkip", navBack);
 
 // Backing out replaces whatever the sheet was going to do next: instead of
 // moving on to another movie, it puts this one back the way it was.
-$("btnRateOops").addEventListener("click", () => {
-  if (ratingPicked || !ratingTarget || !ratingUndo) return;
-  ratingPicked = true;
-  ratingAfter = ratingUndo;
+onSheetPress("btnRateOops", () => {
+  if (ratingUndo) ratingAfter = ratingUndo;
   navBack();
 });
 
