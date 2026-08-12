@@ -81,6 +81,13 @@ button {
   background: var(--card);
   color: var(--text);
   padding: 12px 16px;
+  /* Without this a phone holds every tap back for a moment in case a second
+     one follows and means "zoom", and a tap arriving soon after another touch
+     can be swallowed by that guess entirely. Nothing here is double-tapped —
+     the card's own double-tap runs off pointer events, not clicks. This is
+     what made the rating stars reliable, and the same delay was behind taps
+     that seemed to need repeating elsewhere. */
+  touch-action: manipulation;
 }
 button:active { transform: scale(0.98); }
 
@@ -722,6 +729,13 @@ button:active { transform: scale(0.98); }
 }
 .sheet h2 { margin: 0; }
 .sheet .hint { margin-top: 4px; }
+
+/* The sheet's two links sit exactly where a swipe just finished, so they get
+   the same handling as the stars beside them: a target big enough to hit at
+   arm's length, and no shrink under the finger, which on a small target can
+   pull the edge out from under the tap that's landing on it. */
+.sheet .link-btn { padding: 12px 16px; }
+.sheet .link-btn:active { transform: none; }
 
 /* The way out of a mis-swipe, sat under the rating it's backing out of.
    Quieter than Skip, which is a different answer to the same question. */
